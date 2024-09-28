@@ -1,0 +1,6 @@
+*.swp
+images/**
+models/**
+modules/__pycache__/
+test/**
+venv/
