@@ -10,10 +10,18 @@ Description
 sdcli helps you generate images from the CLI. It's under heavy development so it should only work with:
 
 * linux
+* AMD RTX 6800 (512x512 size for now only... need more VRAM.)
 * python3.12
 * rocm
 
 for now...
+
+You could try it on an nvidia card with more RAM. You would need to:
+
+* add xformers to requirements.txt and install it.
+* remove the environ variables in the script.
+
+I think that would get it to work.
 
 Usage
 =====
