@@ -1,5 +1,6 @@
-#!./venv/bin/python
+#! ./venv/bin/python
 
+import gc
 import os
 import pathlib
 import random
@@ -7,41 +8,39 @@ import re
 import time
 import torch
 from colored import Fore, Back, Style
-from compel import Compel, ReturnedEmbeddingsType
-from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
+from diffusers import StableDiffusionXLPipeline, AutoencoderKL, EulerAncestralDiscreteScheduler
 from diffusers.models.attention_processor import AttnProcessor2_0
+from modules.utils import read_file_as_fstring
+from sd_embed.embedding_funcs import get_weighted_text_embeddings_sdxl
 
-# environment
-os.environ['PYTORCH_ROCM_ARCH'] = "gfx1030"
+# clean memory
+torch.cuda.empty_cache()
+
+# envorinment
+os.environ['PYTORCH_ROCM_ARCH'] = 'gfx1030'
 os.environ['HSA_OVERRIDE_GFX_VERSION'] = '10.3.0'
+
 
 # directories
 pathlib.Path('images').mkdir(parents=True, exist_ok=True)
+pathlib.Path('models').mkdir(parents=True, exist_ok=True)
 
-# pipeline init
 pipeline = StableDiffusionXLPipeline.from_single_file(
     './models/mklanANIMEHentai_nextgenV3.safetensors',
     torch_dtype = torch.float16,
+    variant='fp16',
     use_safetensors = True,
     safety_checker = None,
-    variant="fp16",
-).to("cuda")
-
-# prompt parser init
-compel = Compel(
-    tokenizer = [pipeline.tokenizer, pipeline.tokenizer_2],
-    text_encoder = [pipeline.text_encoder, pipeline.text_encoder_2],
-    returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-    requires_pooled = [False, True],
-)
+    attn_implementation='flash_attention_2',
+).to('cuda')
 
 # optimizations
-pipeline.enable_vae_slicing()
-pipeline.enable_vae_tiling()
+#pipeline.enable_vae_slicing()
+#pipeline.enable_vae_tiling()
 #pipeline.enable_sequential_cpu_offload()
 pipeline.enable_model_cpu_offload()
-pipeline.disable_xformers_memory_efficient_attention()
 #pipeline.enable_xformers_memory_efficient_attention()
+pipeline.disable_xformers_memory_efficient_attention()
 
 ## pytorch 2.0
 #torch.backends.cuda.matmul.allow_tf32 = True
@@ -57,8 +56,9 @@ pipeline.vae.set_attn_processor(AttnProcessor2_0())
 #torch._inductor.config.coordinate_descent_check_all_directions = True
 #pipeline.unet.to(memory_format=torch.channels_last)
 #pipeline.vae.to(memory_format=torch.channels_last)
-#pipeline.unet = torch.compile(pipeline.unet, mode="max-autotune", fullgraph=True)
-#pipeline.vae.decode = torch.compile(pipeline.vae.decode, mode="max-autotune", fullgraph=True)
+#pipeline.unet = torch.compile(pipeline.unet, mode='max-autotune', fullgraph=True)
+#pipeline.vae.decode = torch.compile(pipeline.vae.decode, mode='max-autotune', fullgraph=True)
+
 
 # scheduler
 pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config)
@@ -69,29 +69,40 @@ pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.schedu
 # pipeline
 for i in range(100):
     # prompt
-    ## wildcards
-    action = random.choice(open('wildcards/actions').read().splitlines())
-    attire = random.choice(open('wildcards/attire').read().splitlines())
-    character = random.choice(open('wildcards/characters').read().splitlines())
-    mood = random.choice(open('wildcards/moods').read().splitlines())
-    place = random.choice(open('wildcards/places').read().splitlines())
-    pov = random.choice(open('wildcards/povs').read().splitlines())
-    footwear = random.choice(open('wildcards/footwear').read().splitlines())
+    ## create a dictionary to store wildcards
+    prompt_data = {
+        'action': '',
+        'attire': '',
+        'character': '',
+        'footwear': '',
+        'mood': '',
+        'place': '',
+        'pov': '',
+    }
 
-    ## prompts
-    prompt = ''
-    with open('prompts/default.prompt', 'r', encoding = 'utf-8') as promptfile:
-        for line in promptfile:
-            if line.startswith('#'):
-                continue
-            prompt += f'{line.strip()}'.format(**locals())
+    # get the keys from the prompt_data dictionary
+    keys = list(prompt_data.keys())
 
-    nprompt = ''
-    with open('prompts/default.nprompt', 'r', encoding = 'utf-8') as promptfile:
-        for line in promptfile:
-            if line.startswith('#'):
-                continue
-            nprompt += f'{line.strip()}'.format(**locals())
+    # iterate through each key and fill it with a random value from the corresponding file
+    for key in keys:
+        filename = f'wildcards/{key}s.txt'
+        with open(filename, 'r') as file:
+            lines = [line.strip() for line in file.readlines()]
+        prompt_data[key] = random.choice(lines)
+
+    # get prompt
+    filename = 'prompts/default.prompt'
+    result = read_file_as_fstring(filename, **prompt_data)
+
+    if result:
+        prompt = result
+
+    # get negative prompt
+    filename = 'prompts/default.nprompt'
+    result = read_file_as_fstring(filename, **prompt_data)
+
+    if result:
+        nprompt = result
 
     # print prompts
     print(f'''
@@ -103,29 +114,49 @@ for i in range(100):
 {nprompt}
     ''')
 
-    ## process prompt
-    conditioning, pooled = compel(prompt)
-    nconditioning, npooled = compel(nprompt)
-
-    # clean cache
-    torch.cuda.empty_cache()
+    embeds, nembeds, pooled, npooled = get_weighted_text_embeddings_sdxl(
+        pipeline,
+        prompt = prompt,
+        neg_prompt = nprompt
+    )
 
     # pipeline
     batch = pipeline(
-        prompt_embeds = conditioning,
-        negative_prompt_embeds = nconditioning,
+        prompt_embeds = embeds,
+        negative_prompt_embeds = nembeds,
         pooled_prompt_embeds = pooled,
         negative_pooled_prompt_embeds = npooled,
         width = 1024,
         height = 1024,
         guidance_scale = 3.5,
-        num_inference_steps = 30,
-        num_images_per_prompt = 1,
-        attn_implementation="flash_attention_2",
+        num_inference_steps = 50,
+        num_images_per_prompt = 5,
     )
 
     # save
     for idx, image in enumerate(batch.images):
-        name = "images/{}.png".format(time.strftime('%Y%m%d-%H%M%S'))
+        ## date, time and name
+        date = time.strftime('%Y-%m-%d')
+        daytime = time.strftime('%H%M%S')
+        name = f'images/{date}/{time.strftime("%Y%m%d")}-{daytime}.png'
+
+        ## crear dir
+        pathlib.Path(f'images/{date}').mkdir(parents=True, exist_ok=True)
+
+        ## save
         image.save(name)
+
+        ## sleep
         time.sleep(0.5)
+
+        ## open eof
+        try:
+            os.system(f'/usr/bin/eog -w {name} &')
+        except:
+            pass
+
+    # garbage collection
+    del embeds, nembeds, pooled, npooled
+    gc.collect()
+    torch.cuda.empty_cache()
+

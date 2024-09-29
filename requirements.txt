@@ -13,3 +13,5 @@ torchaudio
 torchvision
 tqdm
 transformers
+xformers
+git+https://github.com/xhinker/sd_embed.git@main
