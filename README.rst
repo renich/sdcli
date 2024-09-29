@@ -48,9 +48,21 @@ Usage
     # generate 10 images in 2 iterations (5 at once) (not working yet)
     ./sdcli.py 2 5
 
+Prompts
+=======
+We have positive ``prompts/default.prompt`` and negative ``prompts/default.nprompt``. You can edit them while generating images.
+They get read in every iteration so you can start generating 100 images and edit that in real time.
+
 Wildcards
 =========
 I have a ton of wildcards in ``wildcards/*``. You can edit them.
+
+To use them, just imagine you're inside an f-string in python. One will get picked randomly for you and you can just use it in
+singular mode. For exmaple: `{character}` always has one character there.
+
+You could do some more complicated thing in the prompt, like, choosing randomly between the randomly chosen wildcard or some other
+string. For example: `{random.choice(['side view'], pov])}`. This will choose `side view` 50% of the time (yeah, right) and a
+randomly picked `pov` the other 50% of the time.
 
 .. warning::
     The name of each file needs to end in "s" for now.
