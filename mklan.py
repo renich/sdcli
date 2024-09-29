@@ -14,7 +14,10 @@ from modules.utils import read_file_as_fstring
 from sd_embed.embedding_funcs import get_weighted_text_embeddings_sdxl
 
 # clean memory
+gc.collect()
 torch.cuda.empty_cache()
+torch.no_grad()
+
 
 # envorinment
 os.environ['PYTORCH_ROCM_ARCH'] = 'gfx1030'
@@ -25,22 +28,41 @@ os.environ['HSA_OVERRIDE_GFX_VERSION'] = '10.3.0'
 pathlib.Path('images').mkdir(parents=True, exist_ok=True)
 pathlib.Path('models').mkdir(parents=True, exist_ok=True)
 
+# vae
+vae = AutoencoderKL.from_pretrained(
+    'madebyollin/sdxl-vae-fp16-fix',
+    torch_dtype = torch.float16,
+    use_safetensors = True,
+)
+
+# scheduler
+scheduler = EulerAncestralDiscreteScheduler.from_pretrained(
+    'stabilityai/stable-diffusion-xl-base-1.0',
+    subfolder = 'scheduler',
+    torch_dtype = torch.float16,
+)
+
+# pipeline
 pipeline = StableDiffusionXLPipeline.from_single_file(
     './models/mklanANIMEHentai_nextgenV3.safetensors',
+    scheduler = scheduler,
+    #vae = vae,
     torch_dtype = torch.float16,
-    variant='fp16',
+    variant = 'fp16',
     use_safetensors = True,
     safety_checker = None,
-    attn_implementation='flash_attention_2',
+    attn_implementation = 'flash_attention_2',
 ).to('cuda')
 
 # optimizations
-#pipeline.enable_vae_slicing()
-#pipeline.enable_vae_tiling()
+pipeline.enable_vae_slicing()
+pipeline.enable_vae_tiling()
 #pipeline.enable_sequential_cpu_offload()
 pipeline.enable_model_cpu_offload()
 #pipeline.enable_xformers_memory_efficient_attention()
-pipeline.disable_xformers_memory_efficient_attention()
+#pipeline.disable_xformers_memory_efficient_attention()
+pipeline.unet.to(memory_format=torch.channels_last)
+pipeline.vae.to(memory_format=torch.channels_last)
 
 ## pytorch 2.0
 #torch.backends.cuda.matmul.allow_tf32 = True
@@ -54,17 +76,12 @@ pipeline.vae.set_attn_processor(AttnProcessor2_0())
 #torch._inductor.config.coordinate_descent_tuning = True
 #torch._inductor.config.epilogue_fusion = False
 #torch._inductor.config.coordinate_descent_check_all_directions = True
-#pipeline.unet.to(memory_format=torch.channels_last)
-#pipeline.vae.to(memory_format=torch.channels_last)
 #pipeline.unet = torch.compile(pipeline.unet, mode='max-autotune', fullgraph=True)
 #pipeline.vae.decode = torch.compile(pipeline.vae.decode, mode='max-autotune', fullgraph=True)
 
-
-# scheduler
-pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config)
-
 # cleanup
 #os.system('find images/ -type f -iname "*.png" -delete')
+#print(pipeline.components)
 
 # pipeline
 for i in range(100):
@@ -130,7 +147,7 @@ for i in range(100):
         height = 1024,
         guidance_scale = 3.5,
         num_inference_steps = 50,
-        num_images_per_prompt = 5,
+        num_images_per_prompt = 1,
     )
 
     # save
