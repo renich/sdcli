@@ -61,7 +61,7 @@ To use them, just imagine you're inside an f-string in python. One will get pick
 singular mode. For exmaple: `{character}` always has one character there.
 
 You could do some more complicated thing in the prompt, like, choosing randomly between the randomly chosen wildcard or some other
-string. For example: `{random.choice(['side view'], pov])}`. This will choose `side view` 50% of the time (yeah, right) and a
+string. For example: `{random.choice(['side view', pov])}`. This will choose `side view` 50% of the time (yeah, right) and a
 randomly picked `pov` the other 50% of the time.
 
 .. warning::
