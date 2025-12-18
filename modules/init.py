@@ -46,7 +46,7 @@ class ImageGenerator:
         
         vae = AutoencoderKL.from_pretrained(
             self.config['vae_path'],
-            torch_dtype=self.dtype,
+            dtype=self.dtype,
             use_safetensors=True,
         )
         
@@ -58,7 +58,7 @@ class ImageGenerator:
             scheduler = DPMSolverMultistepScheduler.from_pretrained(
                 self.config['scheduler_path'],
                 subfolder='scheduler',
-                torch_dtype=self.dtype,
+                dtype=self.dtype,
                 use_karras_sigmas=True,
                 algorithm_type="dpmsolver++",
             )
@@ -66,7 +66,7 @@ class ImageGenerator:
             scheduler = EulerAncestralDiscreteScheduler.from_pretrained(
                 self.config['scheduler_path'],
                 subfolder='scheduler',
-                torch_dtype=self.dtype,
+                dtype=self.dtype,
                 timestep_spacing="trailing"
             )
 
@@ -75,7 +75,7 @@ class ImageGenerator:
             self.config['model_path'],
             scheduler=scheduler,
             vae=vae,
-            torch_dtype=self.dtype,
+            dtype=self.dtype,
             use_safetensors=True,
             safety_checker=None,
             enable_pag=self.config['generation'].get('enable_pag', True),
@@ -111,7 +111,7 @@ class ImageGenerator:
             logging.info("Loading SDXL Refiner Pipeline (Img2Img mode)...")
             self.img2img_pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(
                 self.config['refiner']['model_path'],
-                torch_dtype=self.dtype,
+                dtype=self.dtype,
                 use_safetensors=True,
                 variant="fp16" if self.dtype == torch.float16 else None,
             )
@@ -121,9 +121,6 @@ class ImageGenerator:
             self.img2img_pipeline.unet.set_attn_processor(AttnProcessor2_0())
             self.img2img_pipeline.unet.to(memory_format=torch.channels_last)
             self.img2img_pipeline.vae.to(memory_format=torch.channels_last)
-
-            # Set scheduler to match base pipeline
-            self.img2img_pipeline.scheduler = self.pipeline.scheduler
 
             # Compilation
             try:
@@ -184,28 +181,30 @@ class ImageGenerator:
             return image
 
         logging.info(f"Global Refinement (Strength: {ref_cfg['strength']}, Steps: {ref_cfg['steps']})...")
-        
-        refine_prompt_add = ref_cfg.get('prompt', "")
-        refine_neg_add = ref_cfg.get('negative_prompt', "")
-        
-        final_prompt = original_prompt
-        if refine_prompt_add:
-            final_prompt = f"{original_prompt}, {refine_prompt_add}"
-            
-        final_neg = original_neg_prompt
-        if refine_neg_add:
-            final_neg = f"{original_neg_prompt}, {refine_neg_add}"
+
+        # Use refiner-specific prompts, not the original prompts
+        final_prompt = ref_cfg.get('prompt', original_prompt)
+        final_neg = ref_cfg.get('negative_prompt', original_neg_prompt)
+
+        # Get embeddings to handle long prompts and avoid truncation
+        from sd_embed.embedding_funcs import get_weighted_text_embeddings_sdxl
+        ref_embeds, ref_nembeds, ref_pooled, ref_npooled = get_weighted_text_embeddings_sdxl(
+            self.img2img_pipeline, prompt=final_prompt, neg_prompt=final_neg
+        )
 
         try:
             refined = self.img2img_pipeline(
-                prompt=final_prompt,
-                negative_prompt=final_neg,
+                prompt_embeds=ref_embeds,
+                negative_prompt_embeds=ref_nembeds,
+                pooled_prompt_embeds=ref_pooled,
+                negative_pooled_prompt_embeds=ref_npooled,
                 image=image,
                 strength=ref_cfg.get('strength', 0.35),
                 guidance_scale=ref_cfg.get('guidance_scale', 7.5),
                 num_inference_steps=ref_cfg.get('steps', 30),
                 generator=self.generator
             ).images[0]
+            del ref_embeds, ref_nembeds, ref_pooled, ref_npooled
             self.free_memory()
             return refined
         except Exception as e:
