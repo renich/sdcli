@@ -35,6 +35,7 @@ def load_upscaler(config_path, device):
 
 def upscale_image(image_path, output_dir, model, scale_factor=4):
     """Upscale a single image."""
+    import torch
     try:
         # Load image
         image = Image.open(image_path)
@@ -45,7 +46,8 @@ def upscale_image(image_path, output_dir, model, scale_factor=4):
         
         # Convert to tensor and process
         with torch.no_grad():
-            img_tensor = torch.tensor(np.array(image)).permute(2, 0, 1).unsqueeze(0).float().div(255).to(device)
+            img_tensor = torch.tensor(np.array(image)).permute(2, 0, 1).unsqueeze(0).float().div(255).to(model.device if hasattr(model, 'device') else 'cpu'))
+            # Direct model call instead of .process()
             output = model(img_tensor)
             output = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).mul(255).byte().cpu().numpy()
         
