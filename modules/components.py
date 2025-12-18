@@ -36,9 +36,16 @@ class WildcardManager:
         
         logging.info(f"Loaded {loaded_count} wildcard categories.")
 
-    def get_context(self) -> dict:
+    def get_context(self, iteration=None) -> dict:
         """Returns a dictionary with a random value for every loaded wildcard category."""
-        return {key: random.choice(values) for key, values in self.cache.items()}
+        context = {key: random.choice(values) for key, values in self.cache.items()}
+        
+        # Add iteration-specific context
+        if iteration is not None:
+            context['iteration'] = iteration
+            context['iteration_total'] = iteration + 1
+            
+        return context
 
 
 class Upscaler:

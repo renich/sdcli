@@ -72,8 +72,24 @@ def main():
         for i in range(count):
             logging.info(f"--- Iteration {i+1}/{count} ---")
 
+            # Reload config for each iteration (for dynamic adjustments)
+            try:
+                config = load_config(args.config)
+                # Apply overrides
+                if 'upscaling' not in config: config['upscaling'] = {}
+                if 'refiner' not in config: config['refiner'] = {}
+                
+                if not args.upscale: config['upscaling']['enabled'] = False
+                if not args.refine: config['refiner']['enabled'] = False
+                
+                # Update generator config if it exists
+                if hasattr(generator, 'config'):
+                    generator.config.update(config)
+            except Exception as e:
+                logging.warning(f"Config reload failed for iteration {i+1}: {e}")
+
             # 1. Prepare Prompts
-            ctx = wildcards.get_context()
+            ctx = wildcards.get_context(iteration=i)
             
             p_path = os.path.join(prompts_dir, args.prompt)
             n_path = os.path.join(prompts_dir, args.negative_prompt)

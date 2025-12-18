@@ -27,19 +27,19 @@ generation:
 upscaling:
   enabled: true
   model_path: /usr/local/share/models/comfyui/upscale_models/4x_NMKD-Superscale-SP_178000_G.pth
-  scale_factor: 4
-  tile_size: 512
-  tile_overlap: 32
+  scale_factor: 2  # Reduced from 4x to 2x for better quality
+  tile_size: 256  # Smaller tiles for better processing
+  tile_overlap: 64  # Higher overlap for smoother blending
 refiner:
    enabled: true
    model_path: "stabilityai/stable-diffusion-xl-refiner-1.0"
    use_sam: true
    sam_model: "sam2.1_hiera_large.pt"
-   sam_confidence_threshold: 0.7
+   sam_confidence_threshold: 0.8
    strength: 0.4
    steps: 30
-    guidance_scale: 2
-    debug_yolo: false
-    # Optional overrides for refinement (leave empty to use original prompts)
+   guidance_scale: 2
+   debug_yolo: false
+   # Optional overrides for refinement (leave empty to use original prompts)
    prompt: "gigantic lips, baby traits, blowing eyes, highly detailed, correct anatomy"
    negative_prompt: "artifacts, distortion, anatomical errors"

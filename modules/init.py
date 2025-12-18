@@ -272,10 +272,15 @@ class ImageGenerator:
                     negative_prompt=final_neg,
                     image=image,
                     mask_image=mask,
-                    strength=ref_cfg.get('strength', 0.35),
+                    strength=ref_cfg.get('strength', 0.3),  # Reduced strength for less artifacts
                     guidance_scale=ref_cfg.get('guidance_scale', 2.0),
                     num_inference_steps=ref_cfg.get('steps', 30),
-                    generator=self.generator
+                    generator=self.generator,
+                    # Better inpainting parameters
+                    eta=0.0,  # Deterministic output
+                    clip_skip=False,  # Better consistency
+                    aesthetic_score=6.0,  # Higher quality
+                    controlnet_conditioning_scale=0.8,  # Stronger control
                 ).images[0]
             else:
                 # Use img2img without mask
@@ -375,17 +380,19 @@ class ImageGenerator:
             for result in results:
                 if result.boxes is not None:
                     for box in result.boxes:
-                        if box.conf > 0.4:  # Slightly lower confidence threshold
+                        if box.conf > 0.6:  # Higher confidence threshold for better face quality
                             coords = box.xyxy[0].cpu()
                             x1, y1, x2, y2 = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
                             
-                            # Slightly expand face box for better coverage
-                            expand = int((x2 - x1) * 0.05)  # 5% expansion
+                            # Minimal expansion for face boxes - avoid distortion
+                            expand_x = int((x2 - x1) * 0.02)  # 2% expansion only
+                            expand_y = int((y2 - y1) * 0.02)  # 2% expansion only
+                            
                             expanded_box = [
-                                max(0, int(x1 - expand)), 
-                                max(0, int(y1 - expand)),
-                                min(image_np.shape[1], int(x2 + expand)), 
-                                min(image_np.shape[0], int(y2 + expand))
+                                max(0, int(x1 - expand_x)), 
+                                max(0, int(y1 - expand_y)),
+                                min(image_np.shape[1], int(x2 + expand_x)), 
+                                min(image_np.shape[0], int(y2 + expand_y))
                             ]
                             
                             boxes.append(expanded_box)
@@ -439,11 +446,19 @@ class ImageGenerator:
             # Convert box to SAM format
             sam_box = np.array([box])
             
-            # Generate mask using SAM
-            masks, scores, _ = self.sam_predictor.predict(
-                box=sam_box,
-                multimask_output=True,
-            )
+            # Generate mask using SAM with different settings for faces vs bodies
+            if mask_type == "face":
+                # For faces: use single mask for more precision
+                masks, scores, _ = self.sam_predictor.predict(
+                    box=sam_box,
+                    multimask_output=False,  # Single mask for faces
+                )
+            else:
+                # For bodies: use multiple masks and pick best
+                masks, scores, _ = self.sam_predictor.predict(
+                    box=sam_box,
+                    multimask_output=True,
+                )
             
             # Select best mask (highest score)
             if len(scores) > 0:
