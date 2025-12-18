@@ -1,0 +1,14 @@
+# view
+{random.choice(['side-view', pov])},
+
+# character
+{character}, {action},
+
+# body
+(thick legs:1.6), (narrow waist:1.6), (gigantic muscles:1.6), (gigantic breasts:1.6),
+
+# details
+highres, absurdres, 8k, hyperrealistic, masterpiece, beautiful, high detail, isometric light, light particles,
+intricate details, detailed background, vibrant colors, high-contrast imaging, atmospheric effects, texture mapping,
+global illumination, cinematic quality, photorealism, realistic textures, dynamic lighting, ambient occlusion,
+screen resolution, aspect ratio, wide color gamut, hdr10+, motion blur, depth of field, reflective surfaces, detailed shaders

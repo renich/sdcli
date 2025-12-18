@@ -1,0 +1,18 @@
+--index-url https://download.pytorch.org/whl/rocm6.4
+--extra-index-url https://pypi.org/simple
+torch
+torchvision
+torchaudio
+torchao
+accelerate
+colored
+datasets
+diffusers
+huggingface-hub
+ipykernel
+protobuf
+sentencepiece
+tomesd
+tqdm
+spandrel
+sd_embed @ git+https://github.com/xhinker/sd_embed.git@main

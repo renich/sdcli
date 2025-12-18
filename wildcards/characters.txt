@@ -1,77 +1,33 @@
-A cowgirl
-A female Bodybuilder
-A female adventurer
-A female artist
-A female astronaut
-A female baker
-A female barbarian
-A female belly dancer
-A female boxer
-A female clown
-A female construction worker
-A female cook
-A female dancer
-A female doctor
-A female engineer
-A female explorer
-A female farmer
-A female firefighter
-A female florist
-A female gardener
-A female gymnast
-A female librarian
-A female lifeguard
-A female magician
-A female mechanic
-A female mime
-A female musician
-A female ninja
-A female nurse
-A female pilot
-A female pirate
-A female police officer
-A female programmer
-A female race car driver
-A female referee
-A female scientist
-A female soldier
-A female spy
-A female teacher
-A female therapist
-A female waitress
-A female warrior
-A female wrestler
-A french maid
-A maid
-A nun
-A nurse
-A priestess
-A valkyrie
-A white witch
-A yellow witch
 Aerith Gainsborough (Final Fantasy VII)
 Akane Tendo
 Alcina Dimitrescu
 Alice in wonderland
 Aloy (Zero Dawn)
 Amy Wong (Futurama)
+Ana de Armas
 Android 18 (Dragon Ball Z)
+Angelina Jolie
 April O'neal (Tenage Mutant Ninja Turtles)
 Athena (Saint Seiya)
 Betty Boop
 Betty Rubble (The Flintstones)
 Black witch
 Broli's sister (Dragon Ball)
+Bulma (Dragon ball Z)
 Cammy (Street Fighter)
+Caulifla (Dragon Ball Super)
 Cheetara (Thunder Cats)
 Chun-Li (Street Fighter)
 Cinderella (Disney)
 Ciri
+Cow maiden
 Daphne Blake
+Francine Smith (American Dad)
 Haydee
 Jessica Rabbit
 Kale (Dragon Ball Super)
 Kassandra (Assassin's Creed)
+Kirika
 Kitana (Mortal Kombat)
 Lara Croft
 Li Mei (Mortal Kombat)
@@ -82,10 +38,13 @@ Maggie Simpson (The Simpsons)
 Mai Shiranui (King of Fighters)
 Mareoleona Vermillion (Black Clover)
 Marge Simpson (The Simpsons)
+Marilyn Monroe
 Marin (Saint Seiya)
 Mega man's sister (Mega man)
 Mikasa Ackerman (Attack on Titan)
 Mimosa Vermillion (Black Clover)
+Mitsuri Kanroji (Kimetsu no Yaiba)
+Nezuko Kamado (Kimetsu no Yaiba)
 Noelle Silva (Black Clover)
 Princess Peach
 Princess Zelda
@@ -93,7 +52,9 @@ Quiet (Metal Gear)
 Rambo's sister
 Red witch
 Rogue (X-Men)
+Sailor Jupiter
 Sailor Mars
+Sailor Moon
 Samus Aran
 Saori Kido (Saint Seiya)
 Secre Swallowtail (Black Clover)
@@ -108,3 +69,53 @@ Velma Dinkley
 Waitress
 Wilma Flintstone (The Flintstones)
 Yennefer of Vengerberg (The Witcher)
+cowgirl
+female adventurer
+female artist
+female astronaut
+female baker
+female ballet dancer
+female barbarian
+female belly dancer
+female bodybuilder
+female boxer
+female clown
+female construction worker
+female cook
+female dancer
+female doctor
+female explorer
+female farmer
+female firefighter
+female florist
+female gymnast
+female librarian
+female lifeguard
+female magician
+female mechanic
+female mime
+female musician
+female ninja
+female nurse
+female pilot
+female pirate
+female police officer
+female programmer
+female race car driver
+female referee
+female scientist
+female soldier
+female spy
+female teacher
+female therapist
+female warrior
+female wrestler
+french maid
+maid
+nun
+nurse
+priestess
+valkyrie
+waitress
+white witch
+yellow witch

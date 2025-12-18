@@ -1,15 +1,14 @@
-score_9, 
+score_9,
 
-({random.choice(['side view', pov])}:3.0),
+({random.choice(['side view', pov])}:3),
 
-(mini-giantess:1.5) ({character}:1.5) ({action}:2.0), ({mood}:1.5), ({place}:1.2), 
+(mini-giantess:1.2) ({character}:1.4) ({action}:1.6) at {place},
 
-({attire}:1.5), torn clothes, ({footwear}:1.5),
+({fantasy_attire}:1.5), (torn clothes:1.2), barefoot,
 
-(gigantic breasts:2.4), (gigantic ass:2.4), (gigantic muscles:2.6), (narrow waist:2.0), (wide hips:2.2), (gigantic legs:2.2), (gigantic calves:2.6), 
-long legs, anatomically correct, well defined muscles, (abs:1.2),
+(gigantic breasts:1.8), (gigantic ass:1.8), (gigantic hips:1.8), (gigantic muscles:2.0), (narrow waist:2.4), (gigantic calves:1.8), (gigantic legs:1.8),
+toned muscles, tight, fit, meaty,
 
-(perfect face:2.0), (beautiful face:2.0),
-
-highres, absurdres, 8k, hyper realistic, nsfw, rating_explicit, masterpiece, beautiful, high detail, isometric light,
-intricate details, detailed background, vibrant colors
+highres, 8k, hyperrealistic, masterpiece, high detail, isometric light, light particles, intricate details, detailed background,
+vibrant colors, atmospheric effects, cinematic quality, photorealism, realistic textures, dynamic lighting, ambient occlusion,
+wide color gamut, hdr10+, motion blur, depth of field, reflective surfaces

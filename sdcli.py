@@ -1,179 +1,155 @@
 #! ./venv/bin/python
 
-import gc
 import os
-import pathlib
-import random
-import re
 import time
-import torch
+import pathlib
+import argparse
+import logging
 from colored import Fore, Back, Style
-from diffusers import StableDiffusionXLPipeline, AutoencoderKL, EulerAncestralDiscreteScheduler
-from diffusers.models.attention_processor import AttnProcessor2_0
-from modules.utils import read_file_as_fstring
-from sd_embed.embedding_funcs import get_weighted_text_embeddings_sdxl
 
-# clean memory
-gc.collect()
-torch.cuda.empty_cache()
-torch.no_grad()
+# Utils
+from modules.sdcli.utils import load_config, setup_logging, read_file_as_fstring, embed_metadata_to_png
+from modules.components import WildcardManager
 
+def main():
+    setup_logging()
+    
+    # CLI
+    parser = argparse.ArgumentParser(description="SDCLI - Stable Diffusion Command Line Interface")
+    parser.add_argument("--count", type=int, help="Number of prompts to process")
+    parser.add_argument("--batch-size", type=int, help="Number of images per prompt (in parallel)")
+    parser.add_argument("--prompt", type=str, default="positive.prompt", help="Prompt file")
+    parser.add_argument("--negative-prompt", type=str, default="negative.prompt", help="Negative prompt file")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Config file")
+    
+    # Flags (defaults true in config, these allow disabling)
+    parser.add_argument("--no-upscale", action="store_false", dest="upscale")
+    parser.add_argument("--no-refine", action="store_false", dest="refine")
+    parser.add_argument("--dry-run", action="store_true")
+    
+    parser.set_defaults(upscale=True, refine=True)
+    args = parser.parse_args()
 
-# envorinment
-os.environ['PYTORCH_ROCM_ARCH'] = 'gfx1030'
-os.environ['HSA_OVERRIDE_GFX_VERSION'] = '10.3.0'
+    # Config
+    try:
+        config = load_config(args.config)
+    except Exception as e:
+        logging.error(f"Config Error: {e}")
+        return
 
+    # Overrides
+    if 'upscaling' not in config: config['upscaling'] = {}
+    if 'refiner' not in config: config['refiner'] = {}
+    
+    if not args.upscale: config['upscaling']['enabled'] = False
+    if not args.refine: config['refiner']['enabled'] = False
 
-# directories
-pathlib.Path('images').mkdir(parents=True, exist_ok=True)
-pathlib.Path('models').mkdir(parents=True, exist_ok=True)
+    # Environment
+    for k, v in config.get('environment', {}).items():
+        os.environ[k] = str(v)
 
-# vae
-vae = AutoencoderKL.from_pretrained(
-    'madebyollin/sdxl-vae-fp16-fix',
-    torch_dtype = torch.float16,
-    use_safetensors = True,
-)
+    # Initialize Components
+    from modules.init import ImageGenerator
+    
+    wildcards = WildcardManager(config.get('wildcards_dir', 'wildcards'))
+    generator = ImageGenerator(config)
 
-# scheduler
-scheduler = EulerAncestralDiscreteScheduler.from_pretrained(
-    'stabilityai/stable-diffusion-xl-base-1.0',
-    subfolder = 'scheduler',
-    torch_dtype = torch.float16,
-)
-
-# pipeline
-pipeline = StableDiffusionXLPipeline.from_single_file(
-    './models/mklanANIMEHentai_nextgenV3.safetensors',
-    scheduler = scheduler,
-    #vae = vae,
-    torch_dtype = torch.float16,
-    variant = 'fp16',
-    use_safetensors = True,
-    safety_checker = None,
-    attn_implementation = 'flash_attention_2',
-).to('cuda')
-
-# optimizations
-pipeline.enable_vae_slicing()
-pipeline.enable_vae_tiling()
-#pipeline.enable_sequential_cpu_offload()
-pipeline.enable_model_cpu_offload()
-#pipeline.enable_xformers_memory_efficient_attention()
-#pipeline.disable_xformers_memory_efficient_attention()
-pipeline.unet.to(memory_format=torch.channels_last)
-pipeline.vae.to(memory_format=torch.channels_last)
-
-## pytorch 2.0
-#torch.backends.cuda.matmul.allow_tf32 = True
-pipeline.unet.set_attn_processor(AttnProcessor2_0())
-pipeline.vae.set_attn_processor(AttnProcessor2_0())
-#pipeline.unet.set_default_attn_processor()
-#pipeline.vae.set_default_attn_processor()
-
-## compile
-#torch._inductor.config.conv_1x1_as_mm = True
-#torch._inductor.config.coordinate_descent_tuning = True
-#torch._inductor.config.epilogue_fusion = False
-#torch._inductor.config.coordinate_descent_check_all_directions = True
-#pipeline.unet = torch.compile(pipeline.unet, mode='max-autotune', fullgraph=True)
-#pipeline.vae.decode = torch.compile(pipeline.vae.decode, mode='max-autotune', fullgraph=True)
-
-# cleanup
-#os.system('find images/ -type f -iname "*.png" -delete')
-#print(pipeline.components)
-
-# pipeline
-for i in range(100):
-    # prompt
-    ## create a dictionary to store wildcards
-    prompt_data = {
-        'action': '',
-        'attire': '',
-        'character': '',
-        'footwear': '',
-        'mood': '',
-        'place': '',
-        'pov': '',
-    }
-
-    # get the keys from the prompt_data dictionary
-    keys = list(prompt_data.keys())
-
-    # iterate through each key and fill it with a random value from the corresponding file
-    for key in keys:
-        filename = f'wildcards/{key}s.txt'
-        with open(filename, 'r') as file:
-            lines = [line.strip() for line in file.readlines()]
-        prompt_data[key] = random.choice(lines)
-
-    # get prompt
-    filename = 'prompts/default.prompt'
-    result = read_file_as_fstring(filename, **prompt_data)
-
-    if result:
-        prompt = result
-
-    # get negative prompt
-    filename = 'prompts/default.nprompt'
-    result = read_file_as_fstring(filename, **prompt_data)
-
-    if result:
-        nprompt = result
-
-    # print prompts
-    print(f'''
-
-{Style.bold}{Fore.white}{Back.green}prompt{Style.reset}:
-{prompt}
-
-{Style.bold}{Fore.white}{Back.red}negative prompt{Style.reset}:
-{nprompt}
-    ''')
-
-    embeds, nembeds, pooled, npooled = get_weighted_text_embeddings_sdxl(
-        pipeline,
-        prompt = prompt,
-        neg_prompt = nprompt
-    )
-
-    # pipeline
-    batch = pipeline(
-        prompt_embeds = embeds,
-        negative_prompt_embeds = nembeds,
-        pooled_prompt_embeds = pooled,
-        negative_pooled_prompt_embeds = npooled,
-        width = 1024,
-        height = 1024,
-        guidance_scale = 3.5,
-        num_inference_steps = 50,
-        num_images_per_prompt = 1,
-    )
-
-    # save
-    for idx, image in enumerate(batch.images):
-        ## date, time and name
-        date = time.strftime('%Y-%m-%d')
-        daytime = time.strftime('%H%M%S')
-        name = f'images/{date}/{time.strftime("%Y%m%d")}-{daytime}.png'
-
-        ## crear dir
-        pathlib.Path(f'images/{date}').mkdir(parents=True, exist_ok=True)
-
-        ## save
-        image.save(name)
-
-        ## sleep
-        time.sleep(0.5)
-
-        ## open eof
+    if not args.dry_run:
         try:
-            os.system(f'/usr/bin/eog -w {name} &')
-        except:
-            pass
+            generator.load_resources()
+        except Exception as e:
+            logging.error(f"Initialization Failed: {e}")
+            return
 
-    # garbage collection
-    del embeds, nembeds, pooled, npooled
-    gc.collect()
-    torch.cuda.empty_cache()
+    # Execution Loop
+    count = args.count if args.count is not None else config['generation'].get('count', 1)
+    batch_size = args.batch_size if args.batch_size is not None else config['generation'].get('batch_size', 1)
+    prompts_dir = config.get('prompts_dir', 'prompts')
+    
+    logging.info(f"Starting: {count} iterations, {batch_size} images per iteration...")
 
+    try:
+        for i in range(count):
+            logging.info(f"--- Iteration {i+1}/{count} ---")
+
+            # 1. Prepare Prompts
+            ctx = wildcards.get_context()
+            
+            p_path = os.path.join(prompts_dir, args.prompt)
+            n_path = os.path.join(prompts_dir, args.negative_prompt)
+
+            final_prompt = read_file_as_fstring(p_path, ctx)
+            final_nprompt = read_file_as_fstring(n_path, ctx) or ""
+
+            if not final_prompt:
+                logging.error("Empty prompt. Skipping.")
+                continue
+
+            print(f'\n{Style.bold}{Fore.white}{Back.green}Prompt:{Style.reset}\n{final_prompt}\n')
+            print(f'{Style.bold}{Fore.white}{Back.red}Negative:{Style.reset}\n{final_nprompt}\n')
+
+            if args.dry_run:
+                continue
+
+            # 2. Generate Batch
+            try:
+                images, seed = generator.generate(
+                    prompt=final_prompt,
+                    negative_prompt=final_nprompt,
+                    count=batch_size
+                )
+            except Exception as e:
+                logging.error(f"Generation Failed: {e}")
+                continue
+
+            # 3. Process each image in batch
+            for idx, base_image in enumerate(images):
+                logging.info(f"Processing variation {idx+1}/{batch_size}...")
+                
+                final_image = generator.process_image(base_image, final_prompt, final_nprompt)
+
+                # 4. Save
+                save_base = config['image_path']
+                date_str = time.strftime('%Y-%m-%d')
+                time_str = time.strftime('%H%M%S')
+                full_date = time.strftime("%Y%m%d")
+                
+                out_dir = os.path.join(save_base, date_str)
+                pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
+                
+                # If batch_size > 1, add index to filename
+                suffix = f"_{idx}" if batch_size > 1 else ""
+                filename = f"{full_date}{time_str}{suffix}.png"
+                filepath = os.path.join(out_dir, filename)
+                
+                final_image.save(filepath)
+                logging.info(f"Saved: {filepath}")
+
+                # Metadata
+                ops = []
+                if config['upscaling'].get('enabled'): ops.append("Upscaled")
+                if config['refiner'].get('enabled'): ops.append("Refined")
+                ops_str = f" ({', '.join(ops)})" if ops else ""
+
+                meta = {
+                    'Author': 'Renich Bon Ćirić',
+                    'License': 'CC-BY-SA 4.0',
+                    'Parameters': f"{final_prompt} | Negative: {final_nprompt} | Steps: {config['generation']['steps']} | Seed: {seed} | Batch: {idx+1}/{batch_size}{ops_str}"
+                }
+                embed_metadata_to_png(filepath, meta)
+
+                # Viewer (only for first one in batch to avoid spam?)
+                if idx == 0:
+                    try:
+                        os.system(f'/usr/bin/eog -w {filepath} &> /dev/null &')
+                    except:
+                        pass
+
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print(f"\n{Style.bold}{Fore.yellow}Generation interrupted by user. Exiting gracefully...{Style.reset}")
+    finally:
+        generator.free_memory()
+
+if __name__ == "__main__":
+    main()

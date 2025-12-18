@@ -1,3 +1,6 @@
+Mars
+Stonehenge
+Venus
 a bar
 a barbershop
 a baseball field
@@ -37,9 +40,11 @@ a drugstore
 a factory
 a farm
 a fitness center
+a flower field
 a forest
 a garden
 a golf course
+a grass field
 a greek gymnasium
 a grocery store
 a gym
@@ -63,7 +68,7 @@ a mosque
 a motel
 a mountain
 a museum
-a neighborhood
+a nightclub
 a palace
 a park
 a pharmacy
@@ -126,9 +131,7 @@ an ocean
 an office
 an office building
 earth
-Mars
 space
 the Moon
 the Sun
 the zoo
-Venus
