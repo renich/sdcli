@@ -13,33 +13,33 @@ environment:
   TORCH_BLAS_PREFER_HIPBLASLT: '0'
   TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: '1'
 generation:
-    width: 1024
-    height: 1024
-    steps: 50
-    guidance_scale: 4
-    count: 1
-    batch_size: 1
-    scheduler: "EulerAncestral"
-    enable_pag: false
-    pag_scale: 0.0
-    enable_freeu: true
-    enable_compilation: false
+  width: 1024
+  height: 1024
+  steps: 50
+  guidance_scale: 4
+  count: 1
+  batch_size: 1
+  scheduler: "EulerAncestral"
+  enable_pag: false
+  pag_scale: 0.0
+  enable_freeu: true
+  enable_compilation: false
 upscaling:
-  enabled: true
+  enabled: false
   model_path: /usr/local/share/models/comfyui/upscale_models/4x_NMKD-Superscale-SP_178000_G.pth
-  scale_factor: 2  # Reduced from 4x to 2x for better quality
-  tile_size: 256  # Smaller tiles for better processing
-  tile_overlap: 64  # Higher overlap for smoother blending
+  scale_factor: 2
+  tile_size: 256
+  tile_overlap: 64
 refiner:
-   enabled: true
-   model_path: "stabilityai/stable-diffusion-xl-refiner-1.0"
-   use_sam: true
-   sam_model: "sam2.1_hiera_large.pt"
-   sam_confidence_threshold: 0.8
-   strength: 0.4
-   steps: 30
-   guidance_scale: 2
-   debug_yolo: false
-   # Optional overrides for refinement (leave empty to use original prompts)
-   prompt: "gigantic lips, baby traits, blowing eyes, highly detailed, correct anatomy"
-   negative_prompt: "artifacts, distortion, anatomical errors"
+  enabled: true
+  model_path: "stabilityai/stable-diffusion-xl-refiner-1.0"
+  use_sam: true
+  sam_model: "sam2.1_hiera_large.pt"
+  sam_confidence_threshold: 0.8
+  debug_yolo: false
+  strength: 0.3
+  steps: 30
+  guidance_scale: 2
+  # Optional overrides for refinement (leave empty to use original prompts)
+  prompt: "gigantic lips, baby traits, blowing eyes, highly detailed, correct anatomy"
+  negative_prompt: "artifacts, distortion, anatomical errors"

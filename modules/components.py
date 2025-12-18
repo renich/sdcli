@@ -78,39 +78,18 @@ class Upscaler:
         if self.model is None or not self.config.get('enabled'):
             return image
 
-        logging.info("Step: Upscaling (Tiled)...")
+        logging.info("Step: Upscaling (Simple)...")
         scale = self.config.get('scale_factor', 2)
-        tile_size = self.config.get('tile_size', 256)
-        overlap = self.config.get('tile_overlap', 64)
 
         width, height = image.size
         new_width, new_height = width * scale, height * scale
-        upscaled_image = Image.new("RGB", (new_width, new_height))
         
-        # Generate tiles with proper step calculation
-        step_y = tile_size - overlap
-        step_x = tile_size - overlap
+        # Process whole image at once - no tiling needed
+        with torch.no_grad():
+            img_tensor = torch.tensor(np.array(image)).permute(2, 0, 1).unsqueeze(0).float().div(255).to(self.device)
+            output = self.model(img_tensor)
+            output = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).mul(255).byte().cpu().numpy()
         
-        tiles = []
-        for y in range(0, height, step_y):
-            for x in range(0, width, step_x):
-                tiles.append((x, y))
-
-        for (x, y) in tqdm(tiles, desc="Upscaling Tiles", unit="tile"):
-            # Crop with proper bounds
-            x_end = min(x + tile_size, width)
-            y_end = min(y + tile_size, height)
-            box = (x, y, x_end, y_end)
-            tile = image.crop((box[0], box[1], box[2], box[3]))
-            
-            # Inference
-            with torch.no_grad():
-                img_tensor = torch.tensor(np.array(tile)).permute(2, 0, 1).unsqueeze(0).float().div(255).to(self.device)
-                output = self.model(img_tensor)
-                output = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).mul(255).byte().cpu().numpy()
-            
-            # Paste with smooth blending
-            upscaled_tile = Image.fromarray(output)
-            upscaled_image.paste(upscaled_tile, (x * scale, y * scale))
-
+        upscaled_image = Image.fromarray(output)
+        logging.info(f"Upscaled to {new_width}x{new_height} (scale: {scale}x)")
         return upscaled_image
