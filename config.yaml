@@ -32,9 +32,12 @@ upscaling:
 refiner:
   enabled: true
   model_path: "stabilityai/stable-diffusion-xl-refiner-1.0"
+  use_sam: true
+  sam_model: "sam2.1_hiera_large.pt"
+  sam_confidence_threshold: 0.7
   strength: 0.4
   steps: 30
   guidance_scale: 2
   # Optional overrides for refinement (leave empty to use original prompts)
-  prompt: "highly detailed, sharp focus, correct anatomy, refined details"
-  negative_prompt: "artifacts, blur, distortion, anatomical errors"
+  prompt: "gigantic lips, highly detailed, sharp focus, correct anatomy, refined details"
+  negative_prompt: "artifacts, distortion, anatomical errors"
