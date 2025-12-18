@@ -2,9 +2,10 @@ import gc
 import logging
 import torch
 from diffusers import (
-    StableDiffusionXLPAGPipeline, 
-    AutoencoderKL, 
-    EulerAncestralDiscreteScheduler, 
+    StableDiffusionXLPAGPipeline,
+    StableDiffusionXLImg2ImgPipeline,
+    AutoencoderKL,
+    EulerAncestralDiscreteScheduler,
     DPMSolverMultistepScheduler,
     AutoPipelineForImage2Image
 )
@@ -105,14 +106,33 @@ class ImageGenerator:
         except Exception as e:
             logging.warning(f"Compilation skipped/failed: {e}")
 
-        # Img2Img Pipeline
-        logging.info("Initializing Img2Img Pipeline (Global Refiner)...")
-        self.img2img_pipeline = AutoPipelineForImage2Image.from_pipe(
-            self.pipeline,
-            torch_dtype=self.dtype,
-            use_safetensors=True
-        )
-        self.img2img_pipeline.to(self.device)
+        # Refiner Pipeline (Img2Img mode)
+        if self.config.get('refiner', {}).get('enabled'):
+            logging.info("Loading SDXL Refiner Pipeline (Img2Img mode)...")
+            self.img2img_pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+                self.config['refiner']['model_path'],
+                torch_dtype=self.dtype,
+                use_safetensors=True,
+                variant="fp16" if self.dtype == torch.float16 else None,
+            )
+            self.img2img_pipeline.to(self.device)
+
+            # Apply same optimizations
+            self.img2img_pipeline.unet.set_attn_processor(AttnProcessor2_0())
+            self.img2img_pipeline.unet.to(memory_format=torch.channels_last)
+            self.img2img_pipeline.vae.to(memory_format=torch.channels_last)
+
+            # Set scheduler to match base pipeline
+            self.img2img_pipeline.scheduler = self.pipeline.scheduler
+
+            # Compilation
+            try:
+                logging.info("Compiling Refiner UNet (mode=reduce-overhead)...")
+                self.img2img_pipeline.unet = torch.compile(self.img2img_pipeline.unet, mode="reduce-overhead")
+            except Exception as e:
+                logging.warning(f"Refiner compilation skipped/failed: {e}")
+        else:
+            self.img2img_pipeline = None
         
         logging.info("Pipelines ready.")
 
