@@ -5,50 +5,54 @@ import re
 import yaml
 import os
 import logging
-from colored import Fore, Back, Style
+from rich.logging import RichHandler
+
 
 def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True)],
     )
 
-def load_config(config_path='config.yaml'):
-    with open(config_path, 'r') as f:
+
+def load_config(config_path="config.yaml"):
+    with open(config_path, "r") as f:
         config = yaml.safe_load(f)
-    
+
     # Expand user paths
-    config['image_path'] = os.path.expanduser(config['image_path'])
+    config["image_path"] = os.path.expanduser(config["image_path"])
     return config
+
 
 def read_file_as_fstring(filename, context):
     try:
-        with open(filename, 'r') as file:
+        with open(filename, "r") as file:
             lines = file.readlines()
     except FileNotFoundError:
         logging.error(f"Prompt file not found: {filename}")
         return None
 
-    non_comment_lines = [line for line in lines if not line.startswith('#')]
+    non_comment_lines = [line for line in lines if not line.startswith("#")]
 
     # Join the remaining lines into a single string with newlines
-    fstring_text = '\n'.join(non_comment_lines)
+    fstring_text = "\n".join(non_comment_lines)
 
     # Replace multiple spaces after commas with a single space
-    fstring_text = re.sub(r',\s+', ', ', fstring_text)
+    fstring_text = re.sub(r",\s+", ", ", fstring_text)
 
     # Safe evaluation context
     # We restrict globals to essential modules if needed, or empty to prevent arbitrary code execution
     # But since the user likes the flexibility, we'll allow random.
     safe_globals = {
-        '__builtins__': {},
-        'random': random,
-        'list': list,
-        'dict': dict,
-        'str': str,
-        'int': int,
-        'len': len
+        "__builtins__": {},
+        "random": random,
+        "list": list,
+        "dict": dict,
+        "str": str,
+        "int": int,
+        "len": len,
     }
 
     try:
@@ -61,6 +65,7 @@ def read_file_as_fstring(filename, context):
         return None
 
     return result
+
 
 def embed_metadata_to_png(image_path, metadata):
     """

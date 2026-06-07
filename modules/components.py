@@ -4,11 +4,12 @@ import logging
 import torch
 import numpy as np
 from PIL import Image
-from tqdm import tqdm
 from spandrel import ModelLoader
+
 
 class WildcardManager:
     """Manages loading and sampling from wildcard text files."""
+
     def __init__(self, wildcards_dir: str):
         self.wildcards_dir = wildcards_dir
         self.cache = {}
@@ -26,41 +27,65 @@ class WildcardManager:
                 key = os.path.splitext(filename)[0]
                 path = os.path.join(self.wildcards_dir, filename)
                 try:
-                    with open(path, 'r', encoding='utf-8') as f:
+                    with open(path, "r", encoding="utf-8") as f:
                         lines = [line.strip() for line in f if line.strip()]
                     if lines:
                         self.cache[key] = lines
                         loaded_count += 1
                 except Exception as e:
                     logging.warning(f"Failed to load wildcard {filename}: {e}")
-        
+
         logging.info(f"Loaded {loaded_count} wildcard categories.")
 
     def get_context(self, iteration=None) -> dict:
         """Returns a dictionary with a random value for every loaded wildcard category."""
-        context = {key: random.choice(values) for key, values in self.cache.items()}
-        
+        context = {}
+        for key, values in self.cache.items():
+            context[key] = random.choice(values)
+
+        # Generate singular/plural aliases dynamically without overriding original keys
+        aliases = {}
+        for key, val in context.items():
+            if key.endswith("ss"):
+                # e.g., class -> classes
+                alias = key + "es"
+            elif key.endswith("es") and len(key) > 2 and key[:-2].endswith("s"):
+                # e.g., classes -> class
+                alias = key[:-2]
+            elif key.endswith("s") and len(key) > 1:
+                # e.g., characters -> character
+                alias = key[:-1]
+            else:
+                # e.g., character -> characters
+                alias = key + "s"
+
+            if alias not in context:
+                aliases[alias] = val
+
+        context.update(aliases)
+
         # Add iteration-specific context
         if iteration is not None:
-            context['iteration'] = iteration
-            context['iteration_total'] = iteration + 1
-            
+            context["iteration"] = iteration
+            context["iteration_total"] = iteration + 1
+
         return context
 
 
 class Upscaler:
     """Handles image upscaling using Spandrel."""
+
     def __init__(self, config: dict, device: torch.device):
-        self.config = config.get('upscaling', {})
+        self.config = config.get("upscaling", {})
         self.device = device
         self.model = None
         self._load_model()
 
     def _load_model(self):
-        if not self.config.get('enabled'):
+        if not self.config.get("enabled"):
             return
 
-        path = self.config.get('model_path')
+        path = self.config.get("model_path")
         if not path or not os.path.exists(path):
             logging.warning(f"Upscaler model not found at {path}")
             return
@@ -75,21 +100,36 @@ class Upscaler:
             logging.error(f"Failed to load upscaler: {e}")
 
     def process(self, image: Image.Image) -> Image.Image:
-        if self.model is None or not self.config.get('enabled'):
+        if self.model is None or not self.config.get("enabled"):
             return image
 
         logging.info("Step: Upscaling (Simple)...")
-        scale = self.config.get('scale_factor', 2)
+        scale = self.config.get("scale_factor", 2)
 
         width, height = image.size
         new_width, new_height = width * scale, height * scale
-        
+
         # Process whole image at once - no tiling needed
         with torch.no_grad():
-            img_tensor = torch.tensor(np.array(image)).permute(2, 0, 1).unsqueeze(0).float().div(255).to(self.device)
+            img_tensor = (
+                torch.tensor(np.array(image))
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .float()
+                .div(255)
+                .to(self.device)
+            )
             output = self.model(img_tensor)
-            output = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).mul(255).byte().cpu().numpy()
-        
+            output = (
+                output.squeeze(0)
+                .permute(1, 2, 0)
+                .clamp(0, 1)
+                .mul(255)
+                .byte()
+                .cpu()
+                .numpy()
+            )
+
         upscaled_image = Image.fromarray(output)
         logging.info(f"Upscaled to {new_width}x{new_height} (scale: {scale}x)")
         return upscaled_image

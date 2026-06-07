@@ -31,9 +31,11 @@ Usage
     # create a venv
     python3.12 -m venv venv
 
-    # install dependencies
+    # install dependencies (depending on your GPU architecture)
     pip install --upgrade pip
-    pip install --upgrade -r requirements.txt
+    pip install --upgrade -r requirements-amd.txt      # For AMD ROCm
+    # OR
+    pip install --upgrade -r requirements-nvidia.txt   # For NVIDIA CUDA
 
     # edit the prompts (positive and negative)
     # feel free to use AUTOMATIC1111 syntax: "(huge breasts:1.5)", for example.
@@ -63,9 +65,6 @@ singular mode. For exmaple: `{character}` always has one character there.
 You could do some more complicated thing in the prompt, like, choosing randomly between the randomly chosen wildcard or some other
 string. For example: `{random.choice(['side view', pov])}`. This will choose `side view` 50% of the time (yeah, right) and a
 randomly picked `pov` the other 50% of the time.
-
-.. warning::
-    The name of each file needs to end in "s" for now.
 
 Disclaimer
 ==========

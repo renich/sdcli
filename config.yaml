@@ -27,7 +27,7 @@ generation:
 upscaling:
   enabled: true
   model_path: /usr/local/share/models/comfyui/upscale_models/4x_NMKD-Superscale-SP_178000_G.pth
-  scale_factor: 2
+  scale_factor: 4
   tile_size: 256
   tile_overlap: 64
 refiner:
@@ -43,3 +43,6 @@ refiner:
   # Optional overrides for refinement (leave empty to use original prompts)
   prompt: "gigantic lips, baby traits, blowing eyes, highly detailed, correct anatomy"
   negative_prompt: "artifacts, distortion, anatomical errors"
+
+video_path: ~/Videos/artwork
+video_model_path: /usr/local/share/models/wan2.2-diffusers

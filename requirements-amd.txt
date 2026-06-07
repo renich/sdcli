@@ -5,7 +5,8 @@ torchvision
 torchaudio
 torchao
 accelerate
-colored
+rich
+rich-argparse
 datasets
 diffusers
 huggingface-hub
