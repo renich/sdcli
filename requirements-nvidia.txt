@@ -16,3 +16,4 @@ torchvision
 tqdm
 transformers
 xformers
+ftfy

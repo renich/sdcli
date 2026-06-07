@@ -62,6 +62,9 @@ def main():
     parser.add_argument(
         "--dest", type=str, help="Destination directory for generated images"
     )
+    parser.add_argument(
+        "--out", type=str, help="Exact output filepath (overrides dest, disables batch indexing)"
+    )
 
     # Flags (defaults true in config, these allow disabling)
     parser.add_argument("--no-upscale", action="store_false", dest="upscale")
@@ -185,18 +188,22 @@ def main():
                 )
 
                 # 4. Save
-                save_base = config["image_path"]
-                date_str = time.strftime("%Y-%m-%d")
-                time_str = time.strftime("%H%M%S")
-                full_date = time.strftime("%Y%m%d")
+                if args.out:
+                    filepath = args.out
+                    pathlib.Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+                else:
+                    save_base = config["image_path"]
+                    date_str = time.strftime("%Y-%m-%d")
+                    time_str = time.strftime("%H%M%S")
+                    full_date = time.strftime("%Y%m%d")
 
-                out_dir = os.path.join(save_base, date_str)
-                pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
+                    out_dir = os.path.join(save_base, date_str)
+                    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-                # If batch_size > 1, add index to filename
-                suffix = f"_{idx}" if batch_size > 1 else ""
-                filename = f"{full_date}{time_str}{suffix}.png"
-                filepath = os.path.join(out_dir, filename)
+                    # If batch_size > 1, add index to filename
+                    suffix = f"_{idx}" if batch_size > 1 else ""
+                    filename = f"{full_date}{time_str}{suffix}.png"
+                    filepath = os.path.join(out_dir, filename)
 
                 final_image.save(filepath)
                 logging.info(f"Saved: {filepath}")

@@ -166,14 +166,21 @@ def main():
         logging.info(f"Loading local WanImageToVideoPipeline from: {model_path}")
         try:
             import torch
-            from diffusers import WanImageToVideoPipeline
+            from diffusers import WanImageToVideoPipeline, WanTransformer3DModel
             from diffusers.utils import export_to_video, load_image
             import numpy as np
 
+            logging.info("Loading WanImageToVideoPipeline with transformer_2=None...")
             pipeline = WanImageToVideoPipeline.from_pretrained(
-                model_path, torch_dtype=torch.bfloat16
+                model_path,
+                transformer_2=None,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
             )
-            pipeline.enable_model_cpu_offload()
+            pipeline.config.boundary_ratio = 0.0
+
+            logging.info("Enabling sequential CPU offload...")
+            pipeline.enable_sequential_cpu_offload(device="cuda")
         except Exception as e:
             logging.error(f"Failed to load Wan pipeline: {e}")
             return
@@ -203,6 +210,9 @@ def main():
     logging.info("Generating video frames...")
     try:
         generator = torch.Generator(device="cuda")
+        guidance = args.guidance if args.guidance != 9.0 else (3.5 if use_wan else 9.0)
+        steps = args.steps if args.steps != 50 else (40 if use_wan else 50)
+
         if use_wan:
             # Wan2.2 resolution calculations from README
             max_area = 480 * 832
@@ -222,17 +232,17 @@ def main():
                 height=height,
                 width=width,
                 num_frames=args.frames,
-                guidance_scale=3.5,
-                num_inference_steps=40,
+                guidance_scale=guidance,
+                num_inference_steps=steps,
                 generator=generator,
             ).frames[0]
         else:
             frames = pipeline(
                 prompt=final_prompt,
                 image=image,
-                num_inference_steps=args.steps,
+                num_inference_steps=steps,
                 negative_prompt=final_nprompt,
-                guidance_scale=args.guidance,
+                guidance_scale=guidance,
                 generator=generator,
             ).frames[0]
     except Exception as e:

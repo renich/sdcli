@@ -5,6 +5,7 @@ scheduler_path: stabilityai/stable-diffusion-xl-base-1.0
 wildcards_dir: /usr/local/share/models/comfyui/wildcards
 prompts_dir: prompts
 environment:
+  HF_HOME: '/usr/local/share/models/huggingface'
   HSA_OVERRIDE_GFX_VERSION: '11.0.0'
   HSA_USE_UNIFIED_MEMORY: '1'
   MIOPEN_FIND_MODE: '2'
@@ -27,7 +28,7 @@ generation:
 upscaling:
   enabled: true
   model_path: /usr/local/share/models/comfyui/upscale_models/4x_NMKD-Superscale-SP_178000_G.pth
-  scale_factor: 4
+  scale_factor: 2
   tile_size: 256
   tile_overlap: 64
 refiner:

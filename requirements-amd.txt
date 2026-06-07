@@ -17,3 +17,4 @@ tomesd
 tqdm
 spandrel
 sd_embed @ git+https://github.com/xhinker/sd_embed.git@main
+ftfy
