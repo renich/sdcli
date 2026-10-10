@@ -1,8 +1,9 @@
 *.csv
 *.swp
+*.pyc
+__pycache__/
 images/**
 models/**
-modules/__pycache__/
-test/**
 venv/
 video/**
+scratch/

@@ -1,4 +1,4 @@
-#!/home/renich/Projects/hf/sdcli/venv/bin/python
+#!/usr/bin/env python3
 
 import os
 import argparse
@@ -31,8 +31,9 @@ def load_upscaler(model_path):
 def upscale_single_image(image_path, model, output_dir, scale_factor=4):
     """Upscale a single 1024x1024 image to 4096x4096."""
     try:
-        # Load image
-        image = Image.open(image_path)
+        # Load image with context manager and ensure RGB mode
+        with Image.open(image_path) as raw_image:
+            image = raw_image.convert("RGB")
         width, height = image.size
         new_width, new_height = width * scale_factor, height * scale_factor
 

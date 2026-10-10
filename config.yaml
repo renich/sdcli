@@ -25,17 +25,20 @@ generation:
   pag_scale: 0.0
   enable_freeu: true
   enable_compilation: false
+  enable_cpu_offload: false
 upscaling:
   enabled: true
   model_path: /usr/local/share/models/comfyui/upscale_models/4x_NMKD-Superscale-SP_178000_G.pth
-  scale_factor: 2
-  tile_size: 256
-  tile_overlap: 64
+  scale_factor: 4
 refiner:
   enabled: true
   model_path: "stabilityai/stable-diffusion-xl-refiner-1.0"
   use_sam: true
   sam_model: "sam2.1_hiera_large.pt"
+  sam_dir: "/usr/local/share/models/comfyui/sams"
+  yolo_face_model: "/usr/local/share/models/comfyui/ultralytics/bbox/yolov12l-face.pt"
+  yolo_human_model: "/usr/local/share/models/comfyui/ultralytics/yolo12x.pt"
+  targets: ["face", "body"]
   sam_confidence_threshold: 0.8
   debug_yolo: false
   strength: 0.3

@@ -41,14 +41,20 @@ Usage
     # feel free to use AUTOMATIC1111 syntax: "(huge breasts:1.5)", for example.
     vim prompts/default.*
 
-    # generate an image
-    ./sdcli.py
+   # generate an image
+   ./sdcli.py
 
-    # generate 10 images in 10 iterations (not working yet)
-    ./sdcli.py 10
+   # generate 10 images in 10 iterations (positional shorthand)
+   ./sdcli.py 10
 
-    # generate 10 images in 2 iterations (5 at once) (not working yet)
-    ./sdcli.py 2 5
+   # generate 10 images in 2 iterations (5 in parallel per iteration)
+   ./sdcli.py 2 5
+
+   # generate from a custom prompt string directly
+   ./sdcli.py --prompt "cyberpunk street, neon glow" --count 3
+
+   # generate a video from an image using img2vidcli
+   ./img2vidcli.py path/to/image.png --prompt "slow cinematic camera pan" --seed 42
 
 Prompts
 =======

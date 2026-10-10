@@ -10,16 +10,34 @@ import subprocess
 from rich.console import Console
 from rich_argparse import RichHelpFormatter
 
-# Utils
+from PIL.PngImagePlugin import PngInfo
 from modules.sdcli.utils import (
     load_config,
     setup_logging,
     read_file_as_fstring,
-    embed_metadata_to_png,
+    evaluate_fstring,
 )
 from modules.components import WildcardManager
 
 console = Console()
+
+
+def resolve_prompt(prompt_input, prompts_dir, ctx):
+    """Resolves prompt input from CWD file, prompts directory, or direct text."""
+    if not prompt_input:
+        return ""
+
+    if os.path.exists(prompt_input):
+        logging.info(f"Using prompt path: {prompt_input} (resolved from CWD)")
+        return read_file_as_fstring(prompt_input, ctx)
+
+    p_path = os.path.join(prompts_dir, prompt_input)
+    if os.path.exists(p_path):
+        logging.info(f"Using prompt path: {p_path} (resolved from prompts_dir)")
+        return read_file_as_fstring(p_path, ctx)
+
+    logging.info("Using direct text prompt")
+    return evaluate_fstring(prompt_input, ctx, source="CLI prompt")
 
 
 def apply_overrides(config, args):
@@ -34,7 +52,7 @@ def apply_overrides(config, args):
         config["refiner"]["enabled"] = False
 
     if args.dest:
-        config["image_path"] = args.dest
+        config["image_path"] = os.path.expanduser(args.dest)
 
 
 def main():
@@ -45,25 +63,44 @@ def main():
         description="SDCLI - Stable Diffusion Command Line Interface",
         formatter_class=RichHelpFormatter,
     )
+    parser.add_argument(
+        "pos_count",
+        nargs="?",
+        type=int,
+        default=None,
+        help="Number of prompts to process (positional shorthand)",
+    )
+    parser.add_argument(
+        "pos_batch_size",
+        nargs="?",
+        type=int,
+        default=None,
+        help="Number of images per prompt in parallel (positional shorthand)",
+    )
     parser.add_argument("--count", type=int, help="Number of prompts to process")
     parser.add_argument(
         "--batch-size", type=int, help="Number of images per prompt (in parallel)"
     )
     parser.add_argument(
-        "--prompt", type=str, default="positive.prompt", help="Prompt file"
+        "--prompt",
+        type=str,
+        default="positive.prompt",
+        help="Prompt file or raw text",
     )
     parser.add_argument(
         "--negative-prompt",
         type=str,
         default="negative.prompt",
-        help="Negative prompt file",
+        help="Negative prompt file or raw text",
     )
     parser.add_argument("--config", type=str, default="config.yaml", help="Config file")
     parser.add_argument(
         "--dest", type=str, help="Destination directory for generated images"
     )
     parser.add_argument(
-        "--out", type=str, help="Exact output filepath (overrides dest, disables batch indexing)"
+        "--out",
+        type=str,
+        help="Exact output filepath (overrides dest, disables batch indexing)",
     )
 
     # Flags (defaults true in config, these allow disabling)
@@ -107,12 +144,16 @@ def main():
             return
 
     # Execution Loop
+    count_arg = args.count if args.count is not None else args.pos_count
+    batch_size_arg = (
+        args.batch_size if args.batch_size is not None else args.pos_batch_size
+    )
     count = (
-        args.count if args.count is not None else config["generation"].get("count", 1)
+        count_arg if count_arg is not None else config["generation"].get("count", 1)
     )
     batch_size = (
-        args.batch_size
-        if args.batch_size is not None
+        batch_size_arg
+        if batch_size_arg is not None
         else config["generation"].get("batch_size", 1)
     )
     prompts_dir = config.get("prompts_dir", "prompts")
@@ -139,26 +180,10 @@ def main():
             # 1. Prepare Prompts
             ctx = wildcards.get_context(iteration=i)
 
-            if os.path.exists(args.prompt):
-                p_path = args.prompt
-                logging.info(f"Using prompt path: {p_path} (resolved from CWD)")
-            else:
-                p_path = os.path.join(prompts_dir, args.prompt)
-                logging.info(f"Using prompt path: {p_path} (resolved from prompts_dir)")
-
-            if os.path.exists(args.negative_prompt):
-                n_path = args.negative_prompt
-                logging.info(
-                    f"Using negative prompt path: {n_path} (resolved from CWD)"
-                )
-            else:
-                n_path = os.path.join(prompts_dir, args.negative_prompt)
-                logging.info(
-                    f"Using negative prompt path: {n_path} (resolved from prompts_dir)"
-                )
-
-            final_prompt = read_file_as_fstring(p_path, ctx)
-            final_nprompt = read_file_as_fstring(n_path, ctx) or ""
+            final_prompt = resolve_prompt(args.prompt, prompts_dir, ctx)
+            final_nprompt = (
+                resolve_prompt(args.negative_prompt, prompts_dir, ctx) or ""
+            )
 
             if not final_prompt:
                 logging.error("Empty prompt. Skipping.")
@@ -189,8 +214,15 @@ def main():
 
                 # 4. Save
                 if args.out:
-                    filepath = args.out
-                    pathlib.Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+                    out_path = pathlib.Path(args.out)
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    if count > 1 or batch_size > 1:
+                        filepath = str(
+                            out_path.parent
+                            / f"{out_path.stem}_i{i + 1}_b{idx + 1}{out_path.suffix}"
+                        )
+                    else:
+                        filepath = str(out_path)
                 else:
                     save_base = config["image_path"]
                     date_str = time.strftime("%Y-%m-%d")
@@ -205,10 +237,7 @@ def main():
                     filename = f"{full_date}{time_str}{suffix}.png"
                     filepath = os.path.join(out_dir, filename)
 
-                final_image.save(filepath)
-                logging.info(f"Saved: {filepath}")
-
-                # Metadata
+                # Metadata in single save pass
                 ops = []
                 if config["upscaling"].get("enabled"):
                     ops.append("Upscaled")
@@ -221,10 +250,15 @@ def main():
                     "License": "CC-BY-SA 4.0",
                     "Parameters": f"{final_prompt} | Negative: {final_nprompt} | Steps: {config['generation']['steps']} | Seed: {seed} | Batch: {idx + 1}/{batch_size}{ops_str}",
                 }
-                embed_metadata_to_png(filepath, meta)
+                png_info = PngInfo()
+                for key, value in meta.items():
+                    png_info.add_text(str(key), str(value))
 
-                # Viewer (only for first one in batch to avoid spam?)
-                if idx == 0 and not args.no_view:
+                final_image.save(filepath, pnginfo=png_info)
+                logging.info(f"Saved: {filepath}")
+
+                # Viewer (only on first iteration and first image to prevent window spam)
+                if i == 0 and idx == 0 and not args.no_view:
                     viewer_cmd = config.get("viewer")
                     if viewer_cmd:
                         try:

@@ -15,6 +15,7 @@ from modules.sdcli.utils import (
     load_config,
     setup_logging,
     read_file_as_fstring,
+    evaluate_fstring,
 )
 from modules.components import WildcardManager
 
@@ -74,6 +75,12 @@ def main():
         default=16,
         help="Frames per second for output video (default 16)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for generation (default: random)",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--no-view",
@@ -118,7 +125,7 @@ def main():
         final_prompt = read_file_as_fstring(p_path, ctx)
     else:
         logging.info("Using direct text prompt")
-        final_prompt = args.prompt
+        final_prompt = evaluate_fstring(args.prompt, ctx, source="CLI prompt")
 
     if os.path.exists(args.negative_prompt):
         n_path = args.negative_prompt
@@ -132,7 +139,10 @@ def main():
         final_nprompt = read_file_as_fstring(n_path, ctx) or ""
     else:
         logging.info("Using direct text negative prompt")
-        final_nprompt = args.negative_prompt
+        final_nprompt = (
+            evaluate_fstring(args.negative_prompt, ctx, source="CLI negative prompt")
+            or ""
+        )
 
     if not final_prompt:
         logging.error("Empty prompt. Exiting.")
@@ -166,7 +176,7 @@ def main():
         logging.info(f"Loading local WanImageToVideoPipeline from: {model_path}")
         try:
             import torch
-            from diffusers import WanImageToVideoPipeline, WanTransformer3DModel
+            from diffusers import WanImageToVideoPipeline
             from diffusers.utils import export_to_video, load_image
             import numpy as np
 
@@ -179,8 +189,9 @@ def main():
             )
             pipeline.config.boundary_ratio = 0.0
 
-            logging.info("Enabling sequential CPU offload...")
-            pipeline.enable_sequential_cpu_offload(device="cuda")
+            device_name = "cuda" if torch.cuda.is_available() else "cpu"
+            logging.info(f"Enabling sequential CPU offload (device={device_name})...")
+            pipeline.enable_sequential_cpu_offload(device=device_name)
         except Exception as e:
             logging.error(f"Failed to load Wan pipeline: {e}")
             return
@@ -209,7 +220,15 @@ def main():
     # Generate
     logging.info("Generating video frames...")
     try:
-        generator = torch.Generator(device="cuda")
+        device_name = "cuda" if torch.cuda.is_available() else "cpu"
+        generator = torch.Generator(device=device_name)
+        if args.seed is not None:
+            generator.manual_seed(args.seed)
+        else:
+            generator.seed()
+        current_seed = generator.initial_seed()
+        logging.info(f"Seed: {current_seed}")
+
         guidance = args.guidance if args.guidance != 9.0 else (3.5 if use_wan else 9.0)
         steps = args.steps if args.steps != 50 else (40 if use_wan else 50)
 
@@ -221,8 +240,14 @@ def main():
                 pipeline.vae_scale_factor_spatial
                 * pipeline.transformer.config.patch_size[1]
             )
-            height = round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value
-            width = round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value
+            height = max(
+                mod_value,
+                round(np.sqrt(max_area * aspect_ratio)) // mod_value * mod_value,
+            )
+            width = max(
+                mod_value,
+                round(np.sqrt(max_area / aspect_ratio)) // mod_value * mod_value,
+            )
             image = image.resize((width, height))
 
             frames = pipeline(

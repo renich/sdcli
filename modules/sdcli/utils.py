@@ -18,36 +18,32 @@ def setup_logging():
 
 
 def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     # Expand user paths
-    config["image_path"] = os.path.expanduser(config["image_path"])
+    if "image_path" in config:
+        config["image_path"] = os.path.expanduser(config["image_path"])
+    if "video_path" in config:
+        config["video_path"] = os.path.expanduser(config["video_path"])
+    if "wildcards_dir" in config:
+        config["wildcards_dir"] = os.path.expanduser(config["wildcards_dir"])
     return config
 
 
-def read_file_as_fstring(filename, context):
-    try:
-        with open(filename, "r") as file:
-            lines = file.readlines()
-    except FileNotFoundError:
-        logging.error(f"Prompt file not found: {filename}")
+def evaluate_fstring(text, context, source="<string>"):
+    """Evaluates text substituting wildcards and safe expressions using the provided context."""
+    if text is None:
         return None
 
-    non_comment_lines = [line for line in lines if not line.startswith("#")]
-
-    # Join the remaining lines into a single string with newlines
-    fstring_text = "\n".join(non_comment_lines)
-
     # Replace multiple spaces after commas with a single space
-    fstring_text = re.sub(r",\s+", ", ", fstring_text)
+    cleaned_text = re.sub(r",\s+", ", ", text.strip())
 
-    # Safe evaluation context
-    # We restrict globals to essential modules if needed, or empty to prevent arbitrary code execution
-    # But since the user likes the flexibility, we'll allow random.
     safe_globals = {
         "__builtins__": {},
         "random": random,
+        "choice": random.choice,
+        "randint": random.randint,
         "list": list,
         "dict": dict,
         "str": str,
@@ -55,16 +51,46 @@ def read_file_as_fstring(filename, context):
         "len": len,
     }
 
+    pattern = re.compile(r"\{([^{}]+)\}")
+
+    def replacer(match):
+        expr = match.group(1).strip()
+        # 1. Direct wildcard key match
+        if expr in context:
+            return str(context[expr])
+
+        # 2. Block prohibited dunder traversal
+        if "__" in expr:
+            logging.warning(
+                f"Prohibited dunder access in prompt token from {source}: '{expr}'"
+            )
+            return match.group(0)
+
+        # 3. Attempt safe expression evaluation (e.g. random.choice)
+        try:
+            val = eval(expr, safe_globals, context)
+            return str(val)
+        except Exception:
+            # Preserve non-evaluable tokens (e.g. SD weighting syntax like {masterpiece:1.2})
+            return match.group(0)
+
+    return pattern.sub(replacer, cleaned_text)
+
+
+def read_file_as_fstring(filename, context):
     try:
-        # evaluate the f-string wrapper
-        # We explicitly wrap the content in f"""...""" so the user file is treated as the *inside* of an f-string
-        expression = f'f"""{fstring_text}"""'
-        result = eval(expression, safe_globals, context)
+        with open(filename, "r", encoding="utf-8") as file:
+            lines = file.readlines()
+    except FileNotFoundError:
+        logging.error(f"Prompt file not found: {filename}")
+        return None
     except Exception as e:
-        logging.error(f"Error evaluating template {filename}: {e}")
+        logging.error(f"Error reading prompt file {filename}: {e}")
         return None
 
-    return result
+    non_comment_lines = [line for line in lines if not line.strip().startswith("#")]
+    fstring_text = "\n".join(non_comment_lines)
+    return evaluate_fstring(fstring_text, context, source=filename)
 
 
 def embed_metadata_to_png(image_path, metadata):

@@ -22,13 +22,17 @@ class WildcardManager:
             return
 
         loaded_count = 0
-        for filename in os.listdir(self.wildcards_dir):
+        for filename in sorted(os.listdir(self.wildcards_dir)):
             if filename.endswith(".txt"):
                 key = os.path.splitext(filename)[0]
                 path = os.path.join(self.wildcards_dir, filename)
                 try:
                     with open(path, "r", encoding="utf-8") as f:
-                        lines = [line.strip() for line in f if line.strip()]
+                        lines = [
+                            line.strip()
+                            for line in f
+                            if line.strip() and not line.strip().startswith("#")
+                        ]
                     if lines:
                         self.cache[key] = lines
                         loaded_count += 1
@@ -104,15 +108,12 @@ class Upscaler:
             return image
 
         logging.info("Step: Upscaling (Simple)...")
-        scale = self.config.get("scale_factor", 2)
 
-        width, height = image.size
-        new_width, new_height = width * scale, height * scale
-
-        # Process whole image at once - no tiling needed
+        # Process whole image at once - ensure 3-channel RGB mode
+        rgb_image = image.convert("RGB")
         with torch.no_grad():
             img_tensor = (
-                torch.tensor(np.array(image))
+                torch.tensor(np.array(rgb_image))
                 .permute(2, 0, 1)
                 .unsqueeze(0)
                 .float()
@@ -131,5 +132,21 @@ class Upscaler:
             )
 
         upscaled_image = Image.fromarray(output)
-        logging.info(f"Upscaled to {new_width}x{new_height} (scale: {scale}x)")
+        actual_width, actual_height = upscaled_image.size
+        actual_scale = actual_width / image.width
+        logging.info(
+            f"Upscaled to {actual_width}x{actual_height} (model output: {actual_scale:.1f}x)"
+        )
+
+        target_scale = self.config.get("scale_factor")
+        if target_scale and target_scale < actual_scale:
+            target_width = int(image.width * target_scale)
+            target_height = int(image.height * target_scale)
+            upscaled_image = upscaled_image.resize(
+                (target_width, target_height), Image.Resampling.LANCZOS
+            )
+            logging.info(
+                f"Rescaled to target dimensions {target_width}x{target_height} ({target_scale}x)"
+            )
+
         return upscaled_image

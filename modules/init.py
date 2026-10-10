@@ -96,7 +96,11 @@ class ImageGenerator:
             safety_checker=None,
             enable_pag=self.config["generation"].get("enable_pag", True),
         )
-        self.pipeline.to(self.device)
+        if self.config["generation"].get("enable_cpu_offload", False):
+            logging.info("Enabling Base Pipeline Model CPU Offload...")
+            self.pipeline.enable_model_cpu_offload()
+        else:
+            self.pipeline.to(self.device)
         self.pipeline.vae.enable_tiling()
 
         # FreeU
@@ -124,7 +128,9 @@ class ImageGenerator:
                     self.pipeline(
                         prompt="warmup",
                         num_inference_steps=1,
-                        guidance_scale=0.0,
+                        guidance_scale=self.config["generation"].get(
+                            "guidance_scale", 4.0
+                        ),
                         output_type="latent",
                     )
             except Exception as e:
@@ -152,7 +158,11 @@ class ImageGenerator:
                     use_safetensors=True,
                     variant="fp16" if self.dtype == torch.float16 else None,
                 )
-            self.img2img_pipeline.to(self.device)
+            if self.config["generation"].get("enable_cpu_offload", False):
+                logging.info("Enabling Refiner Pipeline Model CPU Offload...")
+                self.img2img_pipeline.enable_model_cpu_offload()
+            else:
+                self.img2img_pipeline.to(self.device)
 
             # Apply same optimizations
             self.img2img_pipeline.unet.set_attn_processor(AttnProcessor2_0())
@@ -162,9 +172,19 @@ class ImageGenerator:
             # Load SAM if enabled
             if self.config["refiner"].get("use_sam", False):
                 logging.info("Loading SAM2 Model...")
-                sam_ckpt = f"/usr/local/share/models/comfyui/sams/{self.config['refiner']['sam_model']}"
+                sam_model_name = self.config["refiner"].get(
+                    "sam_model", "sam2.1_hiera_large.pt"
+                )
+                sam_dir = self.config["refiner"].get(
+                    "sam_dir", "/usr/local/share/models/comfyui/sams"
+                )
+                if os.path.isabs(sam_model_name) or os.path.exists(sam_model_name):
+                    sam_ckpt = sam_model_name
+                else:
+                    sam_ckpt = os.path.join(sam_dir, sam_model_name)
 
-                # Custom SAM loading to use local config
+                # Custom SAM loading to use repo config directory
+                repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 from hydra.core.global_hydra import GlobalHydra
                 from hydra import initialize_config_dir, compose
                 from omegaconf import OmegaConf
@@ -172,7 +192,7 @@ class ImageGenerator:
                 from sam2.build_sam import _load_checkpoint
 
                 GlobalHydra.instance().clear()
-                with initialize_config_dir(config_dir="/home/renich/Projects/hf/sdcli"):
+                with initialize_config_dir(config_dir=repo_root):
                     cfg = compose(config_name="sam2.1_hiera_l")
 
                 OmegaConf.resolve(cfg)
@@ -201,23 +221,32 @@ class ImageGenerator:
 
     def _load_yolo_models(self):
         """Load YOLO models for face and body detection."""
-        if self.config.get("refiner", {}).get("enabled") and self.config["refiner"].get(
-            "use_sam", False
-        ):
+        ref_cfg = self.config.get("refiner", {})
+        if ref_cfg.get("enabled") and ref_cfg.get("use_sam", False):
             try:
-                # Load YOLO12 face detection model
-                face_model_path = (
-                    "/usr/local/share/models/comfyui/ultralytics/bbox/yolov12l-face.pt"
+                face_model_path = ref_cfg.get(
+                    "yolo_face_model",
+                    "/usr/local/share/models/comfyui/ultralytics/bbox/yolov12l-face.pt",
                 )
-                self.face_detector = YOLO(face_model_path)
-                logging.info(f"Loaded YOLO12 Face model: {face_model_path}")
+                if os.path.exists(face_model_path):
+                    self.face_detector = YOLO(face_model_path)
+                    logging.info(f"Loaded YOLO Face model: {face_model_path}")
+                else:
+                    logging.warning(
+                        f"YOLO Face model path not found: {face_model_path}"
+                    )
 
-                # Load YOLO12 general model for human detection
-                human_model_path = (
-                    "/usr/local/share/models/comfyui/ultralytics/yolo12x.pt"
+                human_model_path = ref_cfg.get(
+                    "yolo_human_model",
+                    "/usr/local/share/models/comfyui/ultralytics/yolo12x.pt",
                 )
-                self.human_detector = YOLO(human_model_path)
-                logging.info(f"Loaded YOLO12 Human model: {human_model_path}")
+                if os.path.exists(human_model_path):
+                    self.human_detector = YOLO(human_model_path)
+                    logging.info(f"Loaded YOLO Human model: {human_model_path}")
+                else:
+                    logging.warning(
+                        f"YOLO Human model path not found: {human_model_path}"
+                    )
 
             except Exception as e:
                 logging.error(f"Failed to load YOLO models: {e}")
@@ -279,32 +308,28 @@ class ImageGenerator:
         )
 
         # Use refiner-specific prompts, not the original prompts
-        final_prompt = ref_cfg.get("prompt", original_prompt)
-        final_neg = ref_cfg.get("negative_prompt", original_neg_prompt)
+        final_prompt = ref_cfg.get("prompt") or original_prompt
+        final_neg = ref_cfg.get("negative_prompt") or original_neg_prompt
 
         try:
             if ref_cfg.get("use_sam", False) and self.sam_predictor:
                 # Use inpaint with SAM-generated mask
                 mask = self._generate_sam_mask(image)
                 if mask is None:
-                    mask = Image.new("L", (image.width, image.height), 255)
+                    logging.info("Skipping SAM inpaint refinement (no targets to refine).")
+                    return image
 
                 refined = self.img2img_pipeline(
                     prompt=final_prompt,
                     negative_prompt=final_neg,
                     image=image,
                     mask_image=mask,
-                    strength=ref_cfg.get(
-                        "strength", 0.3
-                    ),  # Reduced strength for less artifacts
+                    strength=ref_cfg.get("strength", 0.3),
                     guidance_scale=ref_cfg.get("guidance_scale", 2.0),
                     num_inference_steps=ref_cfg.get("steps", 30),
                     generator=self.generator,
-                    # Better inpainting parameters
-                    eta=0.0,  # Deterministic output
-                    clip_skip=False,  # Better consistency
-                    aesthetic_score=6.0,  # Higher quality
-                    controlnet_conditioning_scale=0.8,  # Stronger control
+                    eta=0.0,
+                    aesthetic_score=6.0,
                 ).images[0]
             else:
                 # Use img2img without mask
@@ -324,7 +349,7 @@ class ImageGenerator:
             return image
 
     def _generate_sam_mask(self, image):
-        """Generate masks using YOLO detection + SAM2 segmentation for face, body, and world areas."""
+        """Generate masks using YOLO detection + SAM2 segmentation for configured target areas."""
         logging.info("Generating YOLO+SAM masks...")
         try:
             # Convert PIL to numpy
@@ -340,7 +365,9 @@ class ImageGenerator:
 
             logging.info(f"Detected {len(face_boxes)} faces, {len(human_boxes)} humans")
 
-            # Generate SAM masks for each detection
+            ref_cfg = self.config.get("refiner", {})
+            configured_targets = set(ref_cfg.get("targets", ["face", "body"]))
+
             all_masks = []
             all_scores = []
             mask_types = []
@@ -349,7 +376,7 @@ class ImageGenerator:
             for box in face_boxes:
                 mask, score = self._refine_box_with_sam(box, "face")
                 if mask is not None:
-                    all_masks.append(mask)
+                    all_masks.append(mask > 0)
                     all_scores.append(score)
                     mask_types.append("face")
 
@@ -357,41 +384,46 @@ class ImageGenerator:
             for box in human_boxes:
                 mask, score = self._refine_box_with_sam(box, "body")
                 if mask is not None:
-                    all_masks.append(mask)
+                    all_masks.append(mask > 0)
                     all_scores.append(score)
                     mask_types.append("body")
 
-            # Generate world/background mask (inverse of all person detections)
-            if all_masks:
+            # Generate world/background mask if explicitly requested in targets
+            if "world" in configured_targets and all_masks:
                 world_mask = self._generate_world_mask(image_np, all_masks)
                 all_masks.append(world_mask)
-                all_scores.append(1.0)  # World mask gets highest score
+                all_scores.append(1.0)
                 mask_types.append("world")
 
             if not all_masks:
-                logging.warning("No detections found, falling back to full inpaint")
-                return Image.new("L", (image.width, image.height), 255)
-
-            # Convert to numpy array
-            masks_np = np.array(all_masks)
-            scores_np = np.array(all_scores)
+                logging.info("No detections found, skipping SAM refinement.")
+                return None
 
             logging.info(
-                f"Generated {len(all_masks)} masks: {mask_types} with scores: {scores_np}"
+                f"Generated {len(all_masks)} masks: {mask_types} with scores: {[round(s, 3) for s in all_scores]}"
             )
 
             # Save debug info if enabled
-            if self.config.get("refiner", {}).get("debug_yolo", False):
+            if ref_cfg.get("debug_yolo", False):
                 self._save_debug_masks_yolo_sam(
-                    image_np, masks_np, scores_np, mask_types, face_boxes, human_boxes
+                    image_np, all_masks, all_scores, mask_types, face_boxes, human_boxes
                 )
 
-            # Combine all masks (union of all detections)
-            combined_mask = np.zeros((h, w), dtype=np.uint8)
-            for mask in all_masks:
-                combined_mask = np.maximum(combined_mask, mask.astype(np.uint8) * 255)
+            # Combine only the configured targets
+            combined_mask = np.zeros((h, w), dtype=bool)
+            for mask, m_type in zip(all_masks, mask_types):
+                if m_type in configured_targets:
+                    combined_mask |= (mask > 0)
 
-            return Image.fromarray(combined_mask, mode="L")
+            if not np.any(combined_mask):
+                logging.info(
+                    f"No masks matched configured targets {configured_targets}, skipping SAM refinement."
+                )
+                return None
+
+            # Convert boolean mask cleanly to 0/255 uint8 without overflow
+            mask_bytes = combined_mask.astype(np.uint8) * 255
+            return Image.fromarray(mask_bytes, mode="L")
 
         except Exception as e:
             logging.error(f"YOLO+SAM mask generation failed: {e}")
@@ -478,7 +510,7 @@ class ImageGenerator:
                             boxes.append(expanded_box)
                             if self.config.get("refiner", {}).get("debug_yolo", False):
                                 logging.info(
-                                    f"Body detected: box={expanded_box}, confidence={box.conf:.3f}"
+                                    f"Body detected: box={expanded_box}, confidence={float(box.conf):.3f}"
                                 )
 
             return boxes
@@ -520,15 +552,13 @@ class ImageGenerator:
         """Generate world/background mask as inverse of person detections."""
         h, w = image_np.shape[:2]
 
-        # Create combined person mask
-        combined_person = np.zeros((h, w), dtype=np.uint8)
+        # Create combined person boolean mask
+        combined_person = np.zeros((h, w), dtype=bool)
         for mask in person_masks:
-            combined_person = np.maximum(combined_person, mask.astype(np.uint8))
+            combined_person |= (mask > 0)
 
         # World mask is the inverse
-        world_mask = 255 - combined_person
-
-        return world_mask
+        return ~combined_person
 
     def _save_debug_masks_yolo_sam(
         self, image_np, masks, scores, mask_types, face_boxes, human_boxes
@@ -562,7 +592,8 @@ class ImageGenerator:
             for i, (mask, score, mask_type) in enumerate(
                 zip(masks, scores, mask_types)
             ):
-                mask_img = Image.fromarray(mask.astype(np.uint8) * 255, mode="L")
+                mask_bytes = (mask > 0).astype(np.uint8) * 255
+                mask_img = Image.fromarray(mask_bytes, mode="L")
                 filename = f"{timestamp}_mask_{i}_{mask_type}_score_{score:.3f}.png"
                 mask_img.save(os.path.join(debug_dir, filename))
                 logging.info(f"Saved debug mask: {filename}")
@@ -657,5 +688,6 @@ class ImageGenerator:
         return image
 
     def free_memory(self):
-        torch.cuda.empty_cache()
         gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

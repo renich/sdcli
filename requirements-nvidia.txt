@@ -6,7 +6,7 @@ datasets
 diffusers
 huggingface-hub
 protobuf
-realesrgan @ git+https://github.com/sberbank-ai/Real-ESRGAN.git
+spandrel
 sd_embed @ git+https://github.com/xhinker/sd_embed.git@main
 sentencepiece
 tomesd
@@ -17,3 +17,6 @@ tqdm
 transformers
 xformers
 ftfy
+opencv-python
+sam2
+ultralytics
