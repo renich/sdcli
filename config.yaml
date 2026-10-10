@@ -32,21 +32,36 @@ upscaling:
   scale_factor: 4
 refiner:
   enabled: true
-  model_path: "stabilityai/stable-diffusion-xl-refiner-1.0"
+  model_path: "same_as_base"
   use_sam: true
   sam_model: "sam2.1_hiera_large.pt"
   sam_dir: "/usr/local/share/models/comfyui/sams"
   yolo_face_model: "/usr/local/share/models/comfyui/ultralytics/bbox/yolov12l-face.pt"
-  yolo_human_model: "/usr/local/share/models/comfyui/ultralytics/yolo12x.pt"
-  targets: ["face", "body"]
+  yolo_human_model: "/usr/local/share/models/comfyui/ultralytics/segm/person_yolov8m-seg.pt"
+  targets: ["world", "body", "face"]
   sam_confidence_threshold: 0.8
   debug_yolo: false
   strength: 0.3
-  steps: 30
-  guidance_scale: 2
-  # Optional overrides for refinement (leave empty to use original prompts)
-  prompt: "gigantic lips, baby traits, blowing eyes, highly detailed, correct anatomy"
-  negative_prompt: "artifacts, distortion, anatomical errors"
+  steps: 25
+  guidance_scale: 4.0
+  face_crop_size: 768
+  face_strength: 0.35
+  face_steps: 25
+  face_guidance_scale: 4.5
+  face_prompt: "score_9, (masterpiece:1.2), beautiful detailed face, glowing eyes, detailed iris, long hair, flawless smooth skin, high detail, sharp focus"
+  face_negative_prompt: "deformed eyes, crooked face, bad anatomy, ugly, artifacts, distortion, blurry"
+  body_strength: 0.25
+  body_steps: 20
+  body_guidance_scale: 4.0
+  body_prompt: "score_9, (masterpiece:1.2), beautifully detailed character, intricate clothes, smooth detailed skin, perfect anatomy, high quality"
+  body_negative_prompt: "ugly, bad anatomy, deformed, extra limbs, extra fingers, blurry, artifacts"
+  world_strength: 0.25
+  world_steps: 20
+  world_guidance_scale: 4.0
+  world_prompt: "score_9, (masterpiece:1.2), beautiful atmospheric background, highly detailed scenery, volumetric lighting, sharp focus, 8k"
+  world_negative_prompt: "blurry, low quality, artifacts, distortion, characters, faces"
+  prompt: ""
+  negative_prompt: ""
 
 video_path: ~/Videos/artwork
 video_model_path: /usr/local/share/models/wan2.2-diffusers

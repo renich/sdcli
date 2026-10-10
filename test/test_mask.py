@@ -102,6 +102,148 @@ class TestMaskLogic(unittest.TestCase):
         # World area must be 255 (inpainted)
         self.assertEqual(mask_np[0, 0], 255)
 
+    def test_get_target_prompt_and_negative_prompt(self):
+        ref_cfg = {
+            "prompt": "masterpiece",
+            "negative_prompt": "ugly",
+            "face_prompt": "custom face prompt",
+            "world_negative_prompt": "custom world neg",
+        }
+        # Custom override
+        self.assertEqual(
+            self.generator._get_target_prompt(ref_cfg, "face", "orig"),
+            "custom face prompt",
+        )
+        self.assertEqual(
+            self.generator._get_target_negative_prompt(ref_cfg, "world", "orig_neg"),
+            "custom world neg",
+        )
+
+        # Fallback with anchor tags
+        body_prompt = self.generator._get_target_prompt(ref_cfg, "body", "orig")
+        self.assertIn("masterpiece", body_prompt)
+        self.assertIn("perfect anatomy", body_prompt)
+
+        face_neg = self.generator._get_target_negative_prompt(
+            ref_cfg, "face", "orig_neg"
+        )
+        self.assertIn("ugly", face_neg)
+        self.assertIn("crooked face", face_neg)
+
+    def test_detail_world(self):
+        w, h = 64, 64
+        test_img = Image.new("RGB", (w, h), color=(100, 100, 100))
+        person_mask = np.zeros((h, w), dtype=bool)
+        person_mask[20:40, 20:40] = True
+
+        mock_out = Image.new("RGB", (w, h), color=(200, 200, 200))
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = MagicMock(images=[mock_out])
+        self.generator.img2img_pipeline = mock_pipe
+        self.generator.generator = None
+
+        result = self.generator._detail_world(
+            test_img,
+            [person_mask],
+            "orig_prompt",
+            "orig_neg",
+            {"world_strength": 0.25, "world_steps": 10},
+        )
+        self.assertEqual(result.size, (w, h))
+        mock_pipe.assert_called_once()
+        kwargs = mock_pipe.call_args.kwargs
+        self.assertEqual(kwargs["strength"], 0.25)
+        self.assertEqual(kwargs["num_inference_steps"], 10)
+
+    def test_detail_body(self):
+        w, h = 64, 64
+        test_img = Image.new("RGB", (w, h), color=(100, 100, 100))
+        person_mask = np.zeros((h, w), dtype=bool)
+        person_mask[20:40, 20:40] = True
+
+        mock_out = Image.new("RGB", (w, h), color=(210, 210, 210))
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = MagicMock(images=[mock_out])
+        self.generator.img2img_pipeline = mock_pipe
+        self.generator.generator = None
+
+        result = self.generator._detail_body(
+            test_img,
+            [person_mask],
+            [[20, 20, 40, 40]],
+            "orig_prompt",
+            "orig_neg",
+            {"body_strength": 0.2, "body_steps": 15},
+        )
+        self.assertEqual(result.size, (w, h))
+        mock_pipe.assert_called_once()
+        kwargs = mock_pipe.call_args.kwargs
+        self.assertEqual(kwargs["strength"], 0.2)
+        self.assertEqual(kwargs["num_inference_steps"], 15)
+
+    def test_detail_face(self):
+        w, h = 128, 128
+        test_img = Image.new("RGB", (w, h), color=(100, 100, 100))
+        face_boxes = [[40, 40, 60, 60]]
+
+        mock_crop_out = Image.new("RGB", (768, 768), color=(220, 220, 220))
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = MagicMock(images=[mock_crop_out])
+        self.generator.img2img_pipeline = mock_pipe
+        self.generator.generator = None
+
+        result = self.generator._detail_face(
+            test_img,
+            face_boxes,
+            "orig_prompt",
+            "orig_neg",
+            {"face_strength": 0.35, "face_steps": 20},
+        )
+        self.assertEqual(result.size, (w, h))
+        mock_pipe.assert_called_once()
+        kwargs = mock_pipe.call_args.kwargs
+        self.assertEqual(kwargs["strength"], 0.35)
+        self.assertEqual(kwargs["image"].size, (768, 768))
+
+    def test_refine_global_multi_target_flow(self):
+        w, h = 64, 64
+        test_img = Image.new("RGB", (w, h), color=(50, 50, 50))
+        self.generator.config["refiner"] = {
+            "enabled": True,
+            "use_sam": True,
+            "targets": ["world", "body", "face"],
+        }
+        self.generator.img2img_pipeline = MagicMock()
+
+        person_mask = np.zeros((h, w), dtype=bool)
+        person_mask[20:50, 20:50] = True
+        self.generator._detect_faces = MagicMock(return_value=[[25, 25, 35, 35]])
+        self.generator._detect_humans = MagicMock(return_value=[[20, 20, 50, 50]])
+        self.generator._cached_person_masks = [person_mask]
+
+        calls = []
+
+        def mock_world(image, masks, p, np, cfg):
+            calls.append("world")
+            return image
+
+        def mock_body(image, masks, boxes, p, np, cfg):
+            calls.append("body")
+            return image
+
+        def mock_face(image, boxes, p, np, cfg):
+            calls.append("face")
+            return image
+
+        self.generator._detail_world = mock_world
+        self.generator._detail_body = mock_body
+        self.generator._detail_face = mock_face
+
+        result = self.generator._refine_global(test_img, "prompt", "neg_prompt")
+        self.assertIsNotNone(result)
+        # Verify strict execution order: world -> body -> face
+        self.assertEqual(calls, ["world", "body", "face"])
+
 
 if __name__ == "__main__":
     unittest.main()

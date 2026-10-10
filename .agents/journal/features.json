@@ -1,0 +1,12 @@
+{
+  "features": {
+    "DET-001": {
+      "last_checked": "2026-10-10T22:45:57.730Z",
+      "name": "Multi-target crop detailer for face, body, and world",
+      "passes": true,
+      "spec_ref": "modules/init.py",
+      "verification_cmd": "./venv/bin/python -m unittest test.test_makeover"
+    }
+  },
+  "version": "0.3.0"
+}

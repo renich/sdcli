@@ -2,8 +2,9 @@ import gc
 import logging
 import os
 import torch
+import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 from diffusers import (
     StableDiffusionXLPAGPipeline,
     StableDiffusionXLInpaintPipeline,
@@ -74,7 +75,6 @@ class ImageGenerator:
             scheduler = DPMSolverMultistepScheduler.from_pretrained(
                 self.config["scheduler_path"],
                 subfolder="scheduler",
-                dtype=self.dtype,
                 use_karras_sigmas=True,
                 algorithm_type="dpmsolver++",
             )
@@ -82,7 +82,6 @@ class ImageGenerator:
             scheduler = EulerAncestralDiscreteScheduler.from_pretrained(
                 self.config["scheduler_path"],
                 subfolder="scheduler",
-                dtype=self.dtype,
                 timestep_spacing="trailing",
             )
 
@@ -138,36 +137,79 @@ class ImageGenerator:
         else:
             logging.info("Compilation disabled in config")
 
-        # Refiner Pipeline (Inpaint mode with SAM, or Img2Img mode without SAM)
+        # Refiner Pipeline (Inpaint mode with SAM/Detailer, or Img2Img mode without SAM)
         if self.config.get("refiner", {}).get("enabled"):
-            if self.config["refiner"].get("use_sam", False):
+            ref_cfg = self.config["refiner"]
+            ref_model_path = ref_cfg.get("model_path", "same_as_base")
+            is_shared_base = (
+                ref_model_path in ("same_as_base", "", None)
+                or ref_model_path == self.config.get("model_path")
+            )
+
+            if ref_cfg.get("use_sam", False):
                 logging.info("Loading SDXL Refiner Pipeline (Inpaint mode)...")
-                self.img2img_pipeline = (
-                    StableDiffusionXLInpaintPipeline.from_pretrained(
-                        self.config["refiner"]["model_path"],
+                if is_shared_base:
+                    logging.info(
+                        "Reusing Base Pipeline components for Inpaint Pipeline (zero VRAM overhead)..."
+                    )
+                    self.img2img_pipeline = StableDiffusionXLInpaintPipeline.from_pipe(
+                        self.pipeline
+                    )
+                elif str(ref_model_path).endswith(".safetensors") or (
+                    isinstance(ref_model_path, str) and os.path.isfile(ref_model_path)
+                ):
+                    self.img2img_pipeline = (
+                        StableDiffusionXLInpaintPipeline.from_single_file(
+                            ref_model_path,
+                            dtype=self.dtype,
+                            use_safetensors=True,
+                        )
+                    )
+                else:
+                    self.img2img_pipeline = (
+                        StableDiffusionXLInpaintPipeline.from_pretrained(
+                            ref_model_path,
+                            dtype=self.dtype,
+                            use_safetensors=True,
+                            variant="fp16" if self.dtype == torch.float16 else None,
+                        )
+                    )
+            else:
+                logging.info("Loading SDXL Refiner Pipeline (Img2Img mode)...")
+                if is_shared_base:
+                    logging.info(
+                        "Reusing Base Pipeline components for Img2Img Pipeline (zero VRAM overhead)..."
+                    )
+                    self.img2img_pipeline = AutoPipelineForImage2Image.from_pipe(
+                        self.pipeline
+                    )
+                elif str(ref_model_path).endswith(".safetensors") or (
+                    isinstance(ref_model_path, str) and os.path.isfile(ref_model_path)
+                ):
+                    self.img2img_pipeline = AutoPipelineForImage2Image.from_single_file(
+                        ref_model_path,
+                        dtype=self.dtype,
+                        use_safetensors=True,
+                    )
+                else:
+                    self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
+                        ref_model_path,
                         dtype=self.dtype,
                         use_safetensors=True,
                         variant="fp16" if self.dtype == torch.float16 else None,
                     )
-                )
-            else:
-                logging.info("Loading SDXL Refiner Pipeline (Img2Img mode)...")
-                self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
-                    self.config["refiner"]["model_path"],
-                    dtype=self.dtype,
-                    use_safetensors=True,
-                    variant="fp16" if self.dtype == torch.float16 else None,
-                )
-            if self.config["generation"].get("enable_cpu_offload", False):
-                logging.info("Enabling Refiner Pipeline Model CPU Offload...")
-                self.img2img_pipeline.enable_model_cpu_offload()
-            else:
-                self.img2img_pipeline.to(self.device)
 
-            # Apply same optimizations
-            self.img2img_pipeline.unet.set_attn_processor(AttnProcessor2_0())
-            self.img2img_pipeline.unet.to(memory_format=torch.channels_last)
-            self.img2img_pipeline.vae.to(memory_format=torch.channels_last)
+            if not is_shared_base:
+                if self.config["generation"].get("enable_cpu_offload", False):
+                    logging.info("Enabling Refiner Pipeline Model CPU Offload...")
+                    self.img2img_pipeline.enable_model_cpu_offload()
+                else:
+                    self.img2img_pipeline.to(self.device)
+
+                # Apply optimizations
+                self.img2img_pipeline.unet.set_attn_processor(AttnProcessor2_0())
+                self.img2img_pipeline.unet.to(memory_format=torch.channels_last)
+                self.img2img_pipeline.vae.to(memory_format=torch.channels_last)
 
             # Load SAM if enabled
             if self.config["refiner"].get("use_sam", False):
@@ -236,9 +278,16 @@ class ImageGenerator:
                         f"YOLO Face model path not found: {face_model_path}"
                     )
 
+                default_human_model = (
+                    "/usr/local/share/models/comfyui/ultralytics/segm/person_yolov8m-seg.pt"
+                    if os.path.exists(
+                        "/usr/local/share/models/comfyui/ultralytics/segm/person_yolov8m-seg.pt"
+                    )
+                    else "/usr/local/share/models/comfyui/ultralytics/yolo12x.pt"
+                )
                 human_model_path = ref_cfg.get(
                     "yolo_human_model",
-                    "/usr/local/share/models/comfyui/ultralytics/yolo12x.pt",
+                    default_human_model,
                 )
                 if os.path.exists(human_model_path):
                     self.human_detector = YOLO(human_model_path)
@@ -297,43 +346,216 @@ class ImageGenerator:
 
         return result.images, current_seed
 
+    def _get_target_prompt(self, ref_cfg, target, original_prompt):
+        """Resolves target-specific prompt, falling back to base prompt with target anchors."""
+        custom_prompt = ref_cfg.get(f"{target}_prompt")
+        if custom_prompt:
+            return custom_prompt
+        base = ref_cfg.get("prompt") or original_prompt
+        if target == "face":
+            return f"{base}, detailed face, detailed eyes, sharp focus"
+        elif target == "body":
+            return f"{base}, highly detailed, perfect anatomy"
+        elif target == "world":
+            return f"{base}, detailed background, atmospheric lighting"
+        return base
+
+    def _get_target_negative_prompt(self, ref_cfg, target, original_neg_prompt):
+        """Resolves target-specific negative prompt, falling back to base negative with target anchors."""
+        custom_neg = ref_cfg.get(f"{target}_negative_prompt")
+        if custom_neg:
+            return custom_neg
+        base = ref_cfg.get("negative_prompt") or original_neg_prompt
+        if target == "face":
+            return f"{base}, deformed eyes, crooked face, bad anatomy, ugly, distortion"
+        elif target == "body":
+            return f"{base}, extra limbs, malformed hands, deformed body, bad anatomy"
+        elif target == "world":
+            return f"{base}, blurry, artifacts, distortion"
+        return base
+
+    def _detail_world(
+        self, image, person_masks, original_prompt, original_neg_prompt, ref_cfg
+    ):
+        """Refines the background/world by inpainting outside the person mask."""
+        logging.info("Detailing World (Background)...")
+        w, h = image.size
+        combined_person = np.any(person_masks, axis=0)
+
+        # Dilate person mask slightly to provide a protective boundary buffer
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        person_dilated = cv2.dilate(combined_person.astype(np.uint8), kernel) > 0
+        world_bool = ~person_dilated
+
+        world_mask = Image.fromarray((world_bool.astype(np.uint8) * 255), mode="L")
+        world_mask_feathered = world_mask.filter(ImageFilter.GaussianBlur(radius=8))
+
+        prompt = self._get_target_prompt(ref_cfg, "world", original_prompt)
+        neg_prompt = self._get_target_negative_prompt(
+            ref_cfg, "world", original_neg_prompt
+        )
+        strength = float(ref_cfg.get("world_strength", ref_cfg.get("strength", 0.25)))
+        steps = int(ref_cfg.get("world_steps", ref_cfg.get("steps", 20)))
+        guidance = float(
+            ref_cfg.get("world_guidance_scale", ref_cfg.get("guidance_scale", 4.0))
+        )
+
+        return self.img2img_pipeline(
+            prompt=prompt,
+            negative_prompt=neg_prompt,
+            image=image,
+            mask_image=world_mask_feathered,
+            strength=strength,
+            guidance_scale=guidance,
+            num_inference_steps=steps,
+            generator=self.generator,
+        ).images[0]
+
+    def _detail_body(
+        self,
+        image,
+        person_masks,
+        human_boxes,
+        original_prompt,
+        original_neg_prompt,
+        ref_cfg,
+    ):
+        """Refines character body using person mask."""
+        logging.info("Detailing Body...")
+        w, h = image.size
+
+        if person_masks:
+            combined_person = np.any(person_masks, axis=0)
+            body_mask = Image.fromarray(
+                (combined_person.astype(np.uint8) * 255), mode="L"
+            )
+        else:
+            mask_np = np.zeros((h, w), dtype=np.uint8)
+            for box in human_boxes:
+                x1, y1, x2, y2 = [int(v) for v in box]
+                mask_np[y1:y2, x1:x2] = 255
+            body_mask = Image.fromarray(mask_np, mode="L")
+
+        body_mask_feathered = body_mask.filter(ImageFilter.GaussianBlur(radius=6))
+
+        prompt = self._get_target_prompt(ref_cfg, "body", original_prompt)
+        neg_prompt = self._get_target_negative_prompt(
+            ref_cfg, "body", original_neg_prompt
+        )
+        strength = float(ref_cfg.get("body_strength", ref_cfg.get("strength", 0.25)))
+        steps = int(ref_cfg.get("body_steps", ref_cfg.get("steps", 20)))
+        guidance = float(
+            ref_cfg.get("body_guidance_scale", ref_cfg.get("guidance_scale", 4.0))
+        )
+
+        return self.img2img_pipeline(
+            prompt=prompt,
+            negative_prompt=neg_prompt,
+            image=image,
+            mask_image=body_mask_feathered,
+            strength=strength,
+            guidance_scale=guidance,
+            num_inference_steps=steps,
+            generator=self.generator,
+        ).images[0]
+
+    def _detail_face(
+        self, image, face_boxes, original_prompt, original_neg_prompt, ref_cfg
+    ):
+        """Refines faces using high-resolution crop inpainting."""
+        logging.info(
+            f"Detailing {len(face_boxes)} Face(s) via High-Resolution Crop Inpainting..."
+        )
+        w, h = image.size
+        prompt = self._get_target_prompt(ref_cfg, "face", original_prompt)
+        neg_prompt = self._get_target_negative_prompt(
+            ref_cfg, "face", original_neg_prompt
+        )
+        strength = float(ref_cfg.get("face_strength", ref_cfg.get("strength", 0.35)))
+        steps = int(ref_cfg.get("face_steps", ref_cfg.get("steps", 25)))
+        guidance = float(
+            ref_cfg.get("face_guidance_scale", ref_cfg.get("guidance_scale", 4.5))
+        )
+        crop_res = int(ref_cfg.get("face_crop_size", 768))
+
+        refined_image = image.copy()
+
+        for idx, box in enumerate(face_boxes):
+            x1, y1, x2, y2 = [int(v) for v in box]
+            bw = x2 - x1
+            bh = y2 - y1
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+            # 1.8x context margin around face
+            size = max(bw, bh) * 1.8
+
+            crop_x1 = max(0, int(cx - size / 2))
+            crop_y1 = max(0, int(cy - size / 2))
+            crop_x2 = min(w, int(cx + size / 2))
+            crop_y2 = min(h, int(cy + size / 2))
+            crop_w = crop_x2 - crop_x1
+            crop_h = crop_y2 - crop_y1
+
+            if crop_w < 16 or crop_h < 16:
+                continue
+
+            face_crop = refined_image.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+            rel_x1 = max(0, int(x1 - crop_x1))
+            rel_y1 = max(0, int(y1 - crop_y1))
+            rel_x2 = min(crop_w, int(x2 - crop_x1))
+            rel_y2 = min(crop_h, int(y2 - crop_y1))
+
+            mask_crop = Image.new("L", (crop_w, crop_h), 0)
+            draw = ImageDraw.Draw(mask_crop)
+            draw.ellipse([rel_x1, rel_y1, rel_x2, rel_y2], fill=255)
+            mask_crop = mask_crop.filter(ImageFilter.GaussianBlur(radius=8))
+
+            crop_resized = face_crop.resize(
+                (crop_res, crop_res), Image.Resampling.LANCZOS
+            )
+            mask_resized = mask_crop.resize(
+                (crop_res, crop_res), Image.Resampling.BILINEAR
+            )
+
+            refined_crop = self.img2img_pipeline(
+                prompt=prompt,
+                negative_prompt=neg_prompt,
+                image=crop_resized,
+                mask_image=mask_resized,
+                strength=strength,
+                guidance_scale=guidance,
+                num_inference_steps=steps,
+                generator=self.generator,
+            ).images[0]
+
+            refined_crop_orig = refined_crop.resize(
+                (crop_w, crop_h), Image.Resampling.LANCZOS
+            )
+            refined_image.paste(refined_crop_orig, (crop_x1, crop_y1), mask_crop)
+            logging.info(f"Refined Face {idx+1}/{len(face_boxes)}.")
+
+        return refined_image
+
     def _refine_global(self, image, original_prompt, original_neg_prompt):
-        """Runs refinement pass using inpaint or img2img."""
+        """Runs refinement pass using multi-target crop detailer, SAM inpaint, or img2img."""
         ref_cfg = self.config.get("refiner", {})
         if not ref_cfg.get("enabled", False):
             return image
 
+        if not self.img2img_pipeline:
+            logging.warning("Refiner pipeline not loaded, skipping refinement.")
+            return image
+
         logging.info(
-            f"Global Refinement (Strength: {ref_cfg['strength']}, Steps: {ref_cfg['steps']})..."
+            f"Global Refinement (Strength: {ref_cfg.get('strength', 0.3)}, Steps: {ref_cfg.get('steps', 25)})..."
         )
 
-        # Use refiner-specific prompts, not the original prompts
-        final_prompt = ref_cfg.get("prompt") or original_prompt
-        final_neg = ref_cfg.get("negative_prompt") or original_neg_prompt
-
         try:
-            if ref_cfg.get("use_sam", False) and self.sam_predictor:
-                # Use inpaint with SAM-generated mask
-                mask = self._generate_sam_mask(image)
-                if mask is None:
-                    logging.info("Skipping SAM inpaint refinement (no targets to refine).")
-                    return image
-
-                refined = self.img2img_pipeline(
-                    prompt=final_prompt,
-                    negative_prompt=final_neg,
-                    image=image,
-                    mask_image=mask,
-                    strength=ref_cfg.get("strength", 0.3),
-                    guidance_scale=ref_cfg.get("guidance_scale", 2.0),
-                    num_inference_steps=ref_cfg.get("steps", 30),
-                    generator=self.generator,
-                    eta=0.0,
-                    aesthetic_score=6.0,
-                ).images[0]
-            else:
-                # Use img2img without mask
-                refined = self.img2img_pipeline(
+            if not ref_cfg.get("use_sam", False):
+                # Fallback to whole-image img2img without mask
+                final_prompt = ref_cfg.get("prompt") or original_prompt
+                final_neg = ref_cfg.get("negative_prompt") or original_neg_prompt
+                return self.img2img_pipeline(
                     prompt=final_prompt,
                     negative_prompt=final_neg,
                     image=image,
@@ -343,9 +565,79 @@ class ImageGenerator:
                     generator=self.generator,
                 ).images[0]
 
-            return refined
+            # Multi-target detailing mode
+            configured_targets = list(
+                ref_cfg.get("targets", ["world", "body", "face"])
+            )
+            image_np = np.array(image)
+
+            face_boxes = []
+            if "face" in configured_targets:
+                face_boxes = self._detect_faces(image_np)
+
+            human_boxes = []
+            if "body" in configured_targets or "world" in configured_targets:
+                human_boxes = self._detect_humans(image_np)
+
+            person_masks = []
+            if getattr(self, "_cached_person_masks", None):
+                person_masks = list(self._cached_person_masks)
+            elif self.sam_predictor and human_boxes:
+                self.sam_predictor.set_image(image_np)
+                for box in human_boxes:
+                    mask, score = self._refine_box_with_sam(box, "body")
+                    if mask is not None:
+                        person_masks.append(mask > 0)
+
+            has_face = bool(face_boxes) and "face" in configured_targets
+            has_body = (
+                bool(person_masks) or bool(human_boxes)
+            ) and "body" in configured_targets
+            has_world = bool(person_masks) and "world" in configured_targets
+
+            if not (has_face or has_body or has_world):
+                logging.info("No targets detected for refinement, skipping.")
+                return image
+
+            refined_image = image.copy()
+
+            # Execute in optimal order: world -> body -> face
+            execution_order = []
+            for t in ["world", "body", "face"]:
+                if t in configured_targets:
+                    execution_order.append(t)
+
+            for target in execution_order:
+                if target == "world" and person_masks:
+                    refined_image = self._detail_world(
+                        refined_image,
+                        person_masks,
+                        original_prompt,
+                        original_neg_prompt,
+                        ref_cfg,
+                    )
+                elif target == "body" and (person_masks or human_boxes):
+                    refined_image = self._detail_body(
+                        refined_image,
+                        person_masks,
+                        human_boxes,
+                        original_prompt,
+                        original_neg_prompt,
+                        ref_cfg,
+                    )
+                elif target == "face" and face_boxes:
+                    refined_image = self._detail_face(
+                        refined_image,
+                        face_boxes,
+                        original_prompt,
+                        original_neg_prompt,
+                        ref_cfg,
+                    )
+
+            return refined_image
+
         except Exception as e:
-            logging.error(f"Global Refinement failed: {e}")
+            logging.error(f"Global Refinement failed: {e}", exc_info=True)
             return image
 
     def _generate_sam_mask(self, image):
@@ -430,7 +722,7 @@ class ImageGenerator:
             return None
 
     def _detect_faces(self, image_np):
-        """Detect faces using YOLO12 face model."""
+        """Detect faces using YOLO face model."""
         if not self.face_detector:
             return []
 
@@ -440,9 +732,7 @@ class ImageGenerator:
             for result in results:
                 if result.boxes is not None:
                     for box in result.boxes:
-                        if (
-                            box.conf > 0.6
-                        ):  # Higher confidence threshold for better face quality
+                        if float(box.conf) > 0.4:
                             coords = box.xyxy[0].cpu()
                             x1, y1, x2, y2 = (
                                 int(coords[0]),
@@ -451,9 +741,9 @@ class ImageGenerator:
                                 int(coords[3]),
                             )
 
-                            # Minimal expansion for face boxes - avoid distortion
-                            expand_x = int((x2 - x1) * 0.02)  # 2% expansion only
-                            expand_y = int((y2 - y1) * 0.02)  # 2% expansion only
+                            # Minimal expansion for face boxes
+                            expand_x = int((x2 - x1) * 0.02)
+                            expand_y = int((y2 - y1) * 0.02)
 
                             expanded_box = [
                                 max(0, int(x1 - expand_x)),
@@ -474,20 +764,22 @@ class ImageGenerator:
             return []
 
     def _detect_humans(self, image_np):
-        """Detect bodies using YOLO12 general model (person class)."""
+        """Detect bodies using YOLO person model (box and optional seg masks)."""
         if not self.human_detector:
             return []
 
         try:
             results = self.human_detector(image_np, verbose=False)
             boxes = []
+            self._cached_person_masks = []
+            h, w = image_np.shape[:2]
+
             for result in results:
+                has_masks = result.masks is not None
                 if result.boxes is not None:
-                    for box in result.boxes:
-                        # Filter for person class (class 0 in COCO dataset) with lower threshold for stylized characters
-                        if (
-                            int(box.cls) == 0 and box.conf > 0.25
-                        ):  # Even lower threshold for better body detection
+                    for idx, box in enumerate(result.boxes):
+                        # Filter for person class (class 0 in COCO dataset)
+                        if int(box.cls) == 0 and float(box.conf) > 0.25:
                             coords = box.xyxy[0].cpu()
                             x1, y1, x2, y2 = (
                                 int(coords[0]),
@@ -497,8 +789,8 @@ class ImageGenerator:
                             )
 
                             # Expand box slightly for better body coverage
-                            expand_x = int((x2 - x1) * 0.1)  # 10% horizontal expansion
-                            expand_y = int((y2 - y1) * 0.1)  # 10% vertical expansion
+                            expand_x = int((x2 - x1) * 0.05)
+                            expand_y = int((y2 - y1) * 0.05)
 
                             expanded_box = [
                                 max(0, int(x1 - expand_x)),
@@ -508,6 +800,22 @@ class ImageGenerator:
                             ]
 
                             boxes.append(expanded_box)
+
+                            if has_masks and idx < len(result.masks.data):
+                                m_np = result.masks.data[idx].cpu().numpy()
+                                if m_np.shape != (h, w):
+                                    m_full = (
+                                        cv2.resize(
+                                            m_np,
+                                            (w, h),
+                                            interpolation=cv2.INTER_LINEAR,
+                                        )
+                                        > 0.5
+                                    )
+                                else:
+                                    m_full = m_np > 0.5
+                                self._cached_person_masks.append(m_full)
+
                             if self.config.get("refiner", {}).get("debug_yolo", False):
                                 logging.info(
                                     f"Body detected: box={expanded_box}, confidence={float(box.conf):.3f}"
