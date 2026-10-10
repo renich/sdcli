@@ -62,7 +62,7 @@ class ImageGenerator:
 
         vae = AutoencoderKL.from_pretrained(
             self.config["vae_path"],
-            torch_dtype=self.dtype,
+            dtype=self.dtype,
             use_safetensors=True,
         )
 
@@ -74,7 +74,7 @@ class ImageGenerator:
             scheduler = DPMSolverMultistepScheduler.from_pretrained(
                 self.config["scheduler_path"],
                 subfolder="scheduler",
-                torch_dtype=self.dtype,
+                dtype=self.dtype,
                 use_karras_sigmas=True,
                 algorithm_type="dpmsolver++",
             )
@@ -82,7 +82,7 @@ class ImageGenerator:
             scheduler = EulerAncestralDiscreteScheduler.from_pretrained(
                 self.config["scheduler_path"],
                 subfolder="scheduler",
-                torch_dtype=self.dtype,
+                dtype=self.dtype,
                 timestep_spacing="trailing",
             )
 
@@ -91,7 +91,7 @@ class ImageGenerator:
             self.config["model_path"],
             scheduler=scheduler,
             vae=vae,
-            torch_dtype=self.dtype,
+            dtype=self.dtype,
             use_safetensors=True,
             safety_checker=None,
             enable_pag=self.config["generation"].get("enable_pag", True),
@@ -145,7 +145,7 @@ class ImageGenerator:
                 self.img2img_pipeline = (
                     StableDiffusionXLInpaintPipeline.from_pretrained(
                         self.config["refiner"]["model_path"],
-                        torch_dtype=self.dtype,
+                        dtype=self.dtype,
                         use_safetensors=True,
                         variant="fp16" if self.dtype == torch.float16 else None,
                     )
@@ -154,7 +154,7 @@ class ImageGenerator:
                 logging.info("Loading SDXL Refiner Pipeline (Img2Img mode)...")
                 self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
                     self.config["refiner"]["model_path"],
-                    torch_dtype=self.dtype,
+                    dtype=self.dtype,
                     use_safetensors=True,
                     variant="fp16" if self.dtype == torch.float16 else None,
                 )
@@ -192,7 +192,7 @@ class ImageGenerator:
                 from sam2.build_sam import _load_checkpoint
 
                 GlobalHydra.instance().clear()
-                with initialize_config_dir(config_dir=repo_root):
+                with initialize_config_dir(config_dir=repo_root, version_base="1.2"):
                     cfg = compose(config_name="sam2.1_hiera_l")
 
                 OmegaConf.resolve(cfg)
