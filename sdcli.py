@@ -149,9 +149,7 @@ def main():
     batch_size_arg = (
         args.batch_size if args.batch_size is not None else args.pos_batch_size
     )
-    count = (
-        count_arg if count_arg is not None else config["generation"].get("count", 1)
-    )
+    count = count_arg if count_arg is not None else config["generation"].get("count", 1)
     batch_size = (
         batch_size_arg
         if batch_size_arg is not None
@@ -182,9 +180,7 @@ def main():
             ctx = wildcards.get_context(iteration=i)
 
             final_prompt = resolve_prompt(args.prompt, prompts_dir, ctx)
-            final_nprompt = (
-                resolve_prompt(args.negative_prompt, prompts_dir, ctx) or ""
-            )
+            final_nprompt = resolve_prompt(args.negative_prompt, prompts_dir, ctx) or ""
 
             if not final_prompt:
                 logging.error("Empty prompt. Skipping.")

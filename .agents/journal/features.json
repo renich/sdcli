@@ -20,6 +20,13 @@
       "passes": true,
       "spec_ref": "modules/init.py",
       "verification_cmd": "./venv/bin/python -m unittest discover -s test"
+    },
+    "WARN-001": {
+      "last_checked": "2026-10-11T06:59:52.220Z",
+      "name": "Remediate runtime deprecations, diffusers casting warnings, and local path resolution",
+      "passes": true,
+      "spec_ref": "modules/init.py",
+      "verification_cmd": "./venv/bin/python -m unittest discover -s test"
     }
   },
   "version": "0.3.0"

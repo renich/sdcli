@@ -89,9 +89,7 @@ class TestMaskLogic(unittest.TestCase):
 
         self.generator._detect_faces = MagicMock(return_value=[])
         self.generator._detect_humans = MagicMock(return_value=[[10, 10, 20, 20]])
-        self.generator._refine_box_with_sam = MagicMock(
-            return_value=(person_mask, 0.9)
-        )
+        self.generator._refine_box_with_sam = MagicMock(return_value=(person_mask, 0.9))
 
         result_mask = self.generator._generate_sam_mask(test_img)
 

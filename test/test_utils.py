@@ -39,9 +39,7 @@ class TestUtils(unittest.TestCase):
         # Should preserve {masterpiece:1.2} and {undefined_var} without crashing
         prompt = "solo, {character}, {masterpiece:1.2}, {undefined_var}"
         result = evaluate_fstring(prompt, ctx)
-        self.assertEqual(
-            result, "solo, Motoko, {masterpiece:1.2}, {undefined_var}"
-        )
+        self.assertEqual(result, "solo, Motoko, {masterpiece:1.2}, {undefined_var}")
 
     def test_evaluate_fstring_blocks_dunder_traversal(self):
         ctx = {"character": "Motoko"}

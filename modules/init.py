@@ -21,6 +21,58 @@ from modules.components import Upscaler
 # YOLO imports for detection
 from ultralytics import YOLO
 
+# Upstream diffusers ModelMixin.to checks `if dtype_present_in_args and fp32_modules is not None:`.
+# Since fp32_modules is initialized to `self._keep_in_fp32_modules or []`, it evaluates to `[] is not None` (True)
+# even when no modules need float32, triggering a spurious warning. We wrap .to to ensure _keep_in_fp32_modules
+# is properly None when empty.
+try:
+    import diffusers.models.modeling_utils as _diffusers_modeling
+
+    _orig_to = _diffusers_modeling.ModelMixin.to
+
+    def _safe_to(self, *args, **kwargs):
+        fp32_mods = getattr(self, "_keep_in_fp32_modules", None)
+        if not fp32_mods:
+
+            class _IgnoreEmptyFp32Warning(logging.Filter):
+                def filter(self, record):
+                    msg = record.getMessage()
+                    return not (
+                        "There are modules in" in msg and "kept in float32: []" in msg
+                    )
+
+            filt = _IgnoreEmptyFp32Warning()
+            _diffusers_modeling.logger.addFilter(filt)
+            try:
+                return _orig_to(self, *args, **kwargs)
+            finally:
+                _diffusers_modeling.logger.removeFilter(filt)
+        return _orig_to(self, *args, **kwargs)
+
+    _diffusers_modeling.ModelMixin.to = _safe_to
+except Exception:
+    pass
+
+
+def resolve_hf_model_path(model_id_or_path, config_file="config.json"):
+    """
+    Resolves Hugging Face model identifier to cached snapshot directory if available.
+    Avoids unnecessary network requests and legacy argument deprecations.
+    """
+    if not model_id_or_path:
+        return model_id_or_path
+    if os.path.exists(model_id_or_path):
+        return model_id_or_path
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        cached_file = try_to_load_from_cache(model_id_or_path, config_file)
+        if cached_file and os.path.isfile(cached_file):
+            return os.path.dirname(cached_file)
+    except Exception:
+        pass
+    return model_id_or_path
+
 
 class ImageGenerator:
     def __init__(self, config):
@@ -61,9 +113,10 @@ class ImageGenerator:
     def _load_pipelines(self):
         logging.info("Loading SDXL Pipelines...")
 
+        vae_path = resolve_hf_model_path(self.config["vae_path"], "config.json")
         vae = AutoencoderKL.from_pretrained(
-            self.config["vae_path"],
-            dtype=self.dtype,
+            vae_path,
+            torch_dtype=self.dtype,
             use_safetensors=True,
         )
 
@@ -71,26 +124,54 @@ class ImageGenerator:
         sched_name = self.config["generation"].get("scheduler", "EulerAncestral")
         logging.info(f"Loading Scheduler: {sched_name}")
 
+        sched_resolved = resolve_hf_model_path(
+            self.config["scheduler_path"], "scheduler/scheduler_config.json"
+        )
+        if not sched_resolved or not os.path.exists(sched_resolved):
+            sched_resolved = resolve_hf_model_path(
+                self.config["scheduler_path"], "scheduler_config.json"
+            )
+
+        if sched_resolved and os.path.isdir(sched_resolved):
+            if os.path.isfile(os.path.join(sched_resolved, "scheduler_config.json")):
+                sched_target = sched_resolved
+                subfolder = None
+            elif os.path.isfile(
+                os.path.join(sched_resolved, "scheduler", "scheduler_config.json")
+            ):
+                sched_target = sched_resolved
+                subfolder = "scheduler"
+            else:
+                sched_target = sched_resolved
+                subfolder = None
+        else:
+            sched_target = self.config["scheduler_path"]
+            subfolder = "scheduler"
+
         if sched_name == "DPMSolverMultistep":
             scheduler = DPMSolverMultistepScheduler.from_pretrained(
-                self.config["scheduler_path"],
-                subfolder="scheduler",
+                sched_target,
+                subfolder=subfolder,
                 use_karras_sigmas=True,
                 algorithm_type="dpmsolver++",
             )
         else:
             scheduler = EulerAncestralDiscreteScheduler.from_pretrained(
-                self.config["scheduler_path"],
-                subfolder="scheduler",
+                sched_target,
+                subfolder=subfolder,
                 timestep_spacing="trailing",
             )
 
         # Base Pipeline
+        base_config_dir = resolve_hf_model_path(
+            "stabilityai/stable-diffusion-xl-base-1.0", "model_index.json"
+        )
         self.pipeline = StableDiffusionXLPAGPipeline.from_single_file(
             self.config["model_path"],
+            config=base_config_dir if os.path.isdir(base_config_dir) else None,
             scheduler=scheduler,
             vae=vae,
-            dtype=self.dtype,
+            torch_dtype=self.dtype,
             use_safetensors=True,
             safety_checker=None,
             enable_pag=self.config["generation"].get("enable_pag", True),
@@ -148,10 +229,11 @@ class ImageGenerator:
         if self.config.get("refiner", {}).get("enabled"):
             ref_cfg = self.config["refiner"]
             ref_model_path = ref_cfg.get("model_path", "same_as_base")
-            is_shared_base = (
-                ref_model_path in ("same_as_base", "", None)
-                or ref_model_path == self.config.get("model_path")
-            )
+            is_shared_base = ref_model_path in (
+                "same_as_base",
+                "",
+                None,
+            ) or ref_model_path == self.config.get("model_path")
 
             if ref_cfg.get("use_sam", False):
                 logging.info("Loading SDXL Refiner Pipeline (Inpaint mode)...")
@@ -160,23 +242,33 @@ class ImageGenerator:
                         "Reusing Base Pipeline components for Inpaint Pipeline (zero VRAM overhead)..."
                     )
                     self.img2img_pipeline = StableDiffusionXLInpaintPipeline.from_pipe(
-                        self.pipeline
+                        self.pipeline,
+                        dtype=self.dtype,
                     )
                 elif str(ref_model_path).endswith(".safetensors") or (
                     isinstance(ref_model_path, str) and os.path.isfile(ref_model_path)
                 ):
+                    base_config_dir = resolve_hf_model_path(
+                        "stabilityai/stable-diffusion-xl-base-1.0", "model_index.json"
+                    )
                     self.img2img_pipeline = (
                         StableDiffusionXLInpaintPipeline.from_single_file(
                             ref_model_path,
-                            dtype=self.dtype,
+                            config=base_config_dir
+                            if os.path.isdir(base_config_dir)
+                            else None,
+                            torch_dtype=self.dtype,
                             use_safetensors=True,
                         )
                     )
                 else:
+                    ref_resolved = resolve_hf_model_path(
+                        ref_model_path, "model_index.json"
+                    )
                     self.img2img_pipeline = (
                         StableDiffusionXLInpaintPipeline.from_pretrained(
-                            ref_model_path,
-                            dtype=self.dtype,
+                            ref_resolved,
+                            torch_dtype=self.dtype,
                             use_safetensors=True,
                             variant="fp16" if self.dtype == torch.float16 else None,
                         )
@@ -188,25 +280,38 @@ class ImageGenerator:
                         "Reusing Base Pipeline components for Img2Img Pipeline (zero VRAM overhead)..."
                     )
                     self.img2img_pipeline = AutoPipelineForImage2Image.from_pipe(
-                        self.pipeline
+                        self.pipeline,
+                        dtype=self.dtype,
                     )
                 elif str(ref_model_path).endswith(".safetensors") or (
                     isinstance(ref_model_path, str) and os.path.isfile(ref_model_path)
                 ):
+                    base_config_dir = resolve_hf_model_path(
+                        "stabilityai/stable-diffusion-xl-base-1.0", "model_index.json"
+                    )
                     self.img2img_pipeline = AutoPipelineForImage2Image.from_single_file(
                         ref_model_path,
-                        dtype=self.dtype,
+                        config=base_config_dir
+                        if os.path.isdir(base_config_dir)
+                        else None,
+                        torch_dtype=self.dtype,
                         use_safetensors=True,
                     )
                 else:
+                    ref_resolved = resolve_hf_model_path(
+                        ref_model_path, "model_index.json"
+                    )
                     self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
-                        ref_model_path,
-                        dtype=self.dtype,
+                        ref_resolved,
+                        torch_dtype=self.dtype,
                         use_safetensors=True,
                         variant="fp16" if self.dtype == torch.float16 else None,
                     )
             # Allow unbounded prompt chunking in refiner tokenizers without false-positive length warnings
-            if hasattr(self.img2img_pipeline, "tokenizer") and self.img2img_pipeline.tokenizer is not None:
+            if (
+                hasattr(self.img2img_pipeline, "tokenizer")
+                and self.img2img_pipeline.tokenizer is not None
+            ):
                 self.img2img_pipeline.tokenizer.model_max_length = int(1e9)
             if (
                 hasattr(self.img2img_pipeline, "tokenizer_2")
@@ -367,10 +472,7 @@ class ImageGenerator:
             try:
                 if hasattr(pipe, "tokenizer") and pipe.tokenizer is not None:
                     pipe.tokenizer.model_max_length = int(1e9)
-                if (
-                    hasattr(pipe, "tokenizer_2")
-                    and pipe.tokenizer_2 is not None
-                ):
+                if hasattr(pipe, "tokenizer_2") and pipe.tokenizer_2 is not None:
                     pipe.tokenizer_2.model_max_length = int(1e9)
                 return get_weighted_text_embeddings_sdxl(
                     pipe, prompt=prompt, neg_prompt=negative_prompt
@@ -622,7 +724,7 @@ class ImageGenerator:
                 (crop_w, crop_h), Image.Resampling.LANCZOS
             )
             refined_image.paste(refined_crop_orig, (crop_x1, crop_y1), mask_crop)
-            logging.info(f"Refined Face {idx+1}/{len(face_boxes)}.")
+            logging.info(f"Refined Face {idx + 1}/{len(face_boxes)}.")
 
         return refined_image
 
@@ -674,9 +776,7 @@ class ImageGenerator:
                 return self.img2img_pipeline(**kwargs).images[0]
 
             # Multi-target detailing mode
-            configured_targets = list(
-                ref_cfg.get("targets", ["world", "body", "face"])
-            )
+            configured_targets = list(ref_cfg.get("targets", ["world", "body", "face"]))
             image_np = np.array(image)
 
             face_boxes = []
@@ -813,7 +913,7 @@ class ImageGenerator:
             combined_mask = np.zeros((h, w), dtype=bool)
             for mask, m_type in zip(all_masks, mask_types):
                 if m_type in configured_targets:
-                    combined_mask |= (mask > 0)
+                    combined_mask |= mask > 0
 
             if not np.any(combined_mask):
                 logging.info(
@@ -971,7 +1071,7 @@ class ImageGenerator:
         # Create combined person boolean mask
         combined_person = np.zeros((h, w), dtype=bool)
         for mask in person_masks:
-            combined_person |= (mask > 0)
+            combined_person |= mask > 0
 
         # World mask is the inverse
         return ~combined_person
