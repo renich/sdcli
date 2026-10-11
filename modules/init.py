@@ -102,7 +102,14 @@ class ImageGenerator:
             self.pipeline.to(self.device)
         self.pipeline.vae.enable_tiling()
 
-        # FreeU
+        # Allow unbounded prompt chunking in tokenizers without false-positive length warnings
+        if hasattr(self.pipeline, "tokenizer") and self.pipeline.tokenizer is not None:
+            self.pipeline.tokenizer.model_max_length = int(1e9)
+        if (
+            hasattr(self.pipeline, "tokenizer_2")
+            and self.pipeline.tokenizer_2 is not None
+        ):
+            self.pipeline.tokenizer_2.model_max_length = int(1e9)
         if self.config["generation"].get("enable_freeu", True):
             logging.info("Enabled FreeU.")
             self.pipeline.enable_freeu(s1=0.9, s2=0.2, b1=1.3, b2=1.4)
@@ -198,6 +205,14 @@ class ImageGenerator:
                         use_safetensors=True,
                         variant="fp16" if self.dtype == torch.float16 else None,
                     )
+            # Allow unbounded prompt chunking in refiner tokenizers without false-positive length warnings
+            if hasattr(self.img2img_pipeline, "tokenizer") and self.img2img_pipeline.tokenizer is not None:
+                self.img2img_pipeline.tokenizer.model_max_length = int(1e9)
+            if (
+                hasattr(self.img2img_pipeline, "tokenizer_2")
+                and self.img2img_pipeline.tokenizer_2 is not None
+            ):
+                self.img2img_pipeline.tokenizer_2.model_max_length = int(1e9)
 
             if not is_shared_base:
                 if self.config["generation"].get("enable_cpu_offload", False):
@@ -318,8 +333,8 @@ class ImageGenerator:
         gen_cfg = self.config["generation"]
 
         # Embeddings
-        embeds, nembeds, pooled, npooled = get_weighted_text_embeddings_sdxl(
-            self.pipeline, prompt=prompt, neg_prompt=negative_prompt
+        embeds, nembeds, pooled, npooled = self._encode_prompt_weighted(
+            self.pipeline, prompt=prompt, negative_prompt=negative_prompt
         )
 
         # Generate
@@ -345,6 +360,24 @@ class ImageGenerator:
         self.free_memory()
 
         return result.images, current_seed
+
+    def _encode_prompt_weighted(self, pipe, prompt, negative_prompt):
+        """Encodes weighted prompt using chunked text embeddings to support arbitrary length prompts."""
+        if hasattr(pipe, "text_encoder") and pipe.text_encoder is not None:
+            try:
+                if hasattr(pipe, "tokenizer") and pipe.tokenizer is not None:
+                    pipe.tokenizer.model_max_length = int(1e9)
+                if (
+                    hasattr(pipe, "tokenizer_2")
+                    and pipe.tokenizer_2 is not None
+                ):
+                    pipe.tokenizer_2.model_max_length = int(1e9)
+                return get_weighted_text_embeddings_sdxl(
+                    pipe, prompt=prompt, neg_prompt=negative_prompt
+                )
+            except Exception as e:
+                logging.debug(f"Chunked prompt encoding skipped/fallback: {e}")
+        return None, None, None, None
 
     def _get_target_prompt(self, ref_cfg, target, original_prompt):
         """Resolves target-specific prompt, falling back to base prompt with target anchors."""
@@ -400,16 +433,35 @@ class ImageGenerator:
             ref_cfg.get("world_guidance_scale", ref_cfg.get("guidance_scale", 4.0))
         )
 
-        return self.img2img_pipeline(
-            prompt=prompt,
-            negative_prompt=neg_prompt,
-            image=image,
-            mask_image=world_mask_feathered,
-            strength=strength,
-            guidance_scale=guidance,
-            num_inference_steps=steps,
-            generator=self.generator,
-        ).images[0]
+        embeds, nembeds, pooled, npooled = self._encode_prompt_weighted(
+            self.img2img_pipeline, prompt, neg_prompt
+        )
+        kwargs = {
+            "image": image,
+            "mask_image": world_mask_feathered,
+            "strength": strength,
+            "guidance_scale": guidance,
+            "num_inference_steps": steps,
+            "generator": self.generator,
+        }
+        if embeds is not None:
+            kwargs.update(
+                {
+                    "prompt_embeds": embeds,
+                    "negative_prompt_embeds": nembeds,
+                    "pooled_prompt_embeds": pooled,
+                    "negative_pooled_prompt_embeds": npooled,
+                }
+            )
+        else:
+            kwargs.update(
+                {
+                    "prompt": prompt,
+                    "negative_prompt": neg_prompt,
+                }
+            )
+
+        return self.img2img_pipeline(**kwargs).images[0]
 
     def _detail_body(
         self,
@@ -448,16 +500,35 @@ class ImageGenerator:
             ref_cfg.get("body_guidance_scale", ref_cfg.get("guidance_scale", 4.0))
         )
 
-        return self.img2img_pipeline(
-            prompt=prompt,
-            negative_prompt=neg_prompt,
-            image=image,
-            mask_image=body_mask_feathered,
-            strength=strength,
-            guidance_scale=guidance,
-            num_inference_steps=steps,
-            generator=self.generator,
-        ).images[0]
+        embeds, nembeds, pooled, npooled = self._encode_prompt_weighted(
+            self.img2img_pipeline, prompt, neg_prompt
+        )
+        kwargs = {
+            "image": image,
+            "mask_image": body_mask_feathered,
+            "strength": strength,
+            "guidance_scale": guidance,
+            "num_inference_steps": steps,
+            "generator": self.generator,
+        }
+        if embeds is not None:
+            kwargs.update(
+                {
+                    "prompt_embeds": embeds,
+                    "negative_prompt_embeds": nembeds,
+                    "pooled_prompt_embeds": pooled,
+                    "negative_pooled_prompt_embeds": npooled,
+                }
+            )
+        else:
+            kwargs.update(
+                {
+                    "prompt": prompt,
+                    "negative_prompt": neg_prompt,
+                }
+            )
+
+        return self.img2img_pipeline(**kwargs).images[0]
 
     def _detail_face(
         self, image, face_boxes, original_prompt, original_neg_prompt, ref_cfg
@@ -479,6 +550,9 @@ class ImageGenerator:
         crop_res = int(ref_cfg.get("face_crop_size", 768))
 
         refined_image = image.copy()
+        embeds, nembeds, pooled, npooled = self._encode_prompt_weighted(
+            self.img2img_pipeline, prompt, neg_prompt
+        )
 
         for idx, box in enumerate(face_boxes):
             x1, y1, x2, y2 = [int(v) for v in box]
@@ -517,16 +591,32 @@ class ImageGenerator:
                 (crop_res, crop_res), Image.Resampling.BILINEAR
             )
 
-            refined_crop = self.img2img_pipeline(
-                prompt=prompt,
-                negative_prompt=neg_prompt,
-                image=crop_resized,
-                mask_image=mask_resized,
-                strength=strength,
-                guidance_scale=guidance,
-                num_inference_steps=steps,
-                generator=self.generator,
-            ).images[0]
+            kwargs = {
+                "image": crop_resized,
+                "mask_image": mask_resized,
+                "strength": strength,
+                "guidance_scale": guidance,
+                "num_inference_steps": steps,
+                "generator": self.generator,
+            }
+            if embeds is not None:
+                kwargs.update(
+                    {
+                        "prompt_embeds": embeds,
+                        "negative_prompt_embeds": nembeds,
+                        "pooled_prompt_embeds": pooled,
+                        "negative_pooled_prompt_embeds": npooled,
+                    }
+                )
+            else:
+                kwargs.update(
+                    {
+                        "prompt": prompt,
+                        "negative_prompt": neg_prompt,
+                    }
+                )
+
+            refined_crop = self.img2img_pipeline(**kwargs).images[0]
 
             refined_crop_orig = refined_crop.resize(
                 (crop_w, crop_h), Image.Resampling.LANCZOS
@@ -555,15 +645,33 @@ class ImageGenerator:
                 # Fallback to whole-image img2img without mask
                 final_prompt = ref_cfg.get("prompt") or original_prompt
                 final_neg = ref_cfg.get("negative_prompt") or original_neg_prompt
-                return self.img2img_pipeline(
-                    prompt=final_prompt,
-                    negative_prompt=final_neg,
-                    image=image,
-                    strength=ref_cfg.get("strength", 0.35),
-                    guidance_scale=ref_cfg.get("guidance_scale", 2.0),
-                    num_inference_steps=ref_cfg.get("steps", 30),
-                    generator=self.generator,
-                ).images[0]
+                embeds, nembeds, pooled, npooled = self._encode_prompt_weighted(
+                    self.img2img_pipeline, final_prompt, final_neg
+                )
+                kwargs = {
+                    "image": image,
+                    "strength": ref_cfg.get("strength", 0.35),
+                    "guidance_scale": ref_cfg.get("guidance_scale", 2.0),
+                    "num_inference_steps": ref_cfg.get("steps", 30),
+                    "generator": self.generator,
+                }
+                if embeds is not None:
+                    kwargs.update(
+                        {
+                            "prompt_embeds": embeds,
+                            "negative_prompt_embeds": nembeds,
+                            "pooled_prompt_embeds": pooled,
+                            "negative_pooled_prompt_embeds": npooled,
+                        }
+                    )
+                else:
+                    kwargs.update(
+                        {
+                            "prompt": final_prompt,
+                            "negative_prompt": final_neg,
+                        }
+                    )
+                return self.img2img_pipeline(**kwargs).images[0]
 
             # Multi-target detailing mode
             configured_targets = list(
