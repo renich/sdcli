@@ -2,3 +2,4 @@
 ==============================
 
 * [2026-10-11 00:16:51] [agent-9c1ed6bc] [START,DEV] [prev:3e47c8a6355dc30a46d7db82ce83e4e92986ab2e6485d3030c82560fdd3c7bf4] [hash:ff3b8745d364b29fe2a51b82f7c829b25c4d3bd2ba4f324aa5a3747a07696db0] START: Eliminating transformers token indices length warning by configuring tokenizer.model_max_length for unbounded chunking and passing weighted chunked embeddings to inpaint pipeline.
+* [2026-10-11 00:30:54] [agent-9c1ed6bc] [GOT,DEV] [prev:ff3b8745d364b29fe2a51b82f7c829b25c4d3bd2ba4f324aa5a3747a07696db0] [hash:1ab8fef3f3c57c20d6004121dcd2d63041fa10bd4708be7f24a8e7d3482ebd97] GOT: Partitioned image output path into YYYY/<YYYY-MM-DD> with get_output_filepath helper. Merged refiner-img2img-fix into master, pushed to origin (GitLab & GitHub), and deleted local/remote feature branches.
