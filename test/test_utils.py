@@ -2,6 +2,7 @@ import unittest
 import os
 import sys
 import tempfile
+import time
 from unittest.mock import MagicMock
 from PIL import Image
 
@@ -12,6 +13,8 @@ from modules.sdcli.utils import (
     evaluate_fstring,
     read_file_as_fstring,
     embed_metadata_to_png,
+    get_output_dir,
+    get_output_filepath,
 )
 from sdcli import apply_overrides
 
@@ -112,6 +115,35 @@ class TestUtils(unittest.TestCase):
         finally:
             if os.path.exists(filepath):
                 os.remove(filepath)
+
+    def test_get_output_dir_hierarchy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_time = time.strptime("2026-10-11 14:30:15", "%Y-%m-%d %H:%M:%S")
+            out_dir = get_output_dir(tmpdir, timestamp=fake_time)
+            expected_dir = os.path.join(tmpdir, "2026", "2026-10-11")
+            self.assertEqual(out_dir, expected_dir)
+            self.assertTrue(os.path.isdir(expected_dir))
+
+    def test_get_output_filepath_hierarchy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_time = time.strptime("2026-10-11 14:30:15", "%Y-%m-%d %H:%M:%S")
+            path = get_output_filepath(
+                tmpdir, timestamp=fake_time, batch_idx=0, batch_size=1
+            )
+            expected_path = os.path.join(
+                tmpdir, "2026", "2026-10-11", "20261011143015.png"
+            )
+            self.assertEqual(path, expected_path)
+            self.assertTrue(os.path.isdir(os.path.dirname(path)))
+
+            # Test batch variation naming
+            batch_path = get_output_filepath(
+                tmpdir, timestamp=fake_time, batch_idx=2, batch_size=4
+            )
+            expected_batch_path = os.path.join(
+                tmpdir, "2026", "2026-10-11", "20261011143015_2.png"
+            )
+            self.assertEqual(batch_path, expected_batch_path)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,13 @@
       "spec_ref": "modules/init.py",
       "verification_cmd": "./venv/bin/python -m unittest test.test_makeover"
     },
+    "DIR-001": {
+      "last_checked": "2026-10-11T06:24:36.809Z",
+      "name": "Partition image storage by YYYY/<YYYY-MM-DD>",
+      "passes": true,
+      "spec_ref": "modules/sdcli/utils.py, sdcli.py",
+      "verification_cmd": "./venv/bin/python -m unittest test/test_utils.py"
+    },
     "TOK-001": {
       "last_checked": "2026-10-11T06:21:42.735Z",
       "name": "Suppress false-positive token length warning and support chunked embeddings in inpaint",

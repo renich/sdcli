@@ -2,6 +2,8 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 import random
 import re
+import pathlib
+import time
 import yaml
 import os
 import logging
@@ -29,6 +31,37 @@ def load_config(config_path="config.yaml"):
     if "wildcards_dir" in config:
         config["wildcards_dir"] = os.path.expanduser(config["wildcards_dir"])
     return config
+
+
+def get_output_dir(save_base, timestamp=None):
+    """
+    Returns the output directory partitioned by year and full date (YYYY/YYYY-MM-DD).
+    Creates the directory if it does not exist.
+    """
+    if timestamp is None:
+        timestamp = time.localtime()
+    year_str = time.strftime("%Y", timestamp)
+    date_str = time.strftime("%Y-%m-%d", timestamp)
+    base = os.path.expanduser(save_base)
+    out_dir = os.path.join(base, year_str, date_str)
+    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def get_output_filepath(
+    save_base, timestamp=None, batch_idx=0, batch_size=1, extension=".png"
+):
+    """
+    Constructs the target filepath within save_base/YYYY/YYYY-MM-DD/YYYYMMDDHHMMSS[_idx].png.
+    """
+    if timestamp is None:
+        timestamp = time.localtime()
+    out_dir = get_output_dir(save_base, timestamp)
+    time_str = time.strftime("%H%M%S", timestamp)
+    full_date = time.strftime("%Y%m%d", timestamp)
+    suffix = f"_{batch_idx}" if batch_size > 1 else ""
+    filename = f"{full_date}{time_str}{suffix}{extension}"
+    return os.path.join(out_dir, filename)
 
 
 def evaluate_fstring(text, context, source="<string>"):

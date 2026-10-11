@@ -16,6 +16,7 @@ from modules.sdcli.utils import (
     setup_logging,
     read_file_as_fstring,
     evaluate_fstring,
+    get_output_filepath,
 )
 from modules.components import WildcardManager
 
@@ -224,18 +225,11 @@ def main():
                     else:
                         filepath = str(out_path)
                 else:
-                    save_base = config["image_path"]
-                    date_str = time.strftime("%Y-%m-%d")
-                    time_str = time.strftime("%H%M%S")
-                    full_date = time.strftime("%Y%m%d")
-
-                    out_dir = os.path.join(save_base, date_str)
-                    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
-
-                    # If batch_size > 1, add index to filename
-                    suffix = f"_{idx}" if batch_size > 1 else ""
-                    filename = f"{full_date}{time_str}{suffix}.png"
-                    filepath = os.path.join(out_dir, filename)
+                    filepath = get_output_filepath(
+                        save_base=config["image_path"],
+                        batch_idx=idx,
+                        batch_size=batch_size,
+                    )
 
                 # Metadata in single save pass
                 ops = []
