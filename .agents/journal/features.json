@@ -14,6 +14,13 @@
       "spec_ref": "modules/sdcli/utils.py, sdcli.py",
       "verification_cmd": "./venv/bin/python -m unittest test/test_utils.py"
     },
+    "NAM-001": {
+      "last_checked": "2026-10-11T07:10:43.910Z",
+      "name": "Append snake_cased character name to generated image filenames if set in prompt",
+      "passes": true,
+      "spec_ref": "modules/sdcli/utils.py, sdcli.py",
+      "verification_cmd": "./venv/bin/python -m unittest test/test_utils.py"
+    },
     "TOK-001": {
       "last_checked": "2026-10-11T06:21:42.735Z",
       "name": "Suppress false-positive token length warning and support chunked embeddings in inpaint",

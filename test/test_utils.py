@@ -15,6 +15,9 @@ from modules.sdcli.utils import (
     embed_metadata_to_png,
     get_output_dir,
     get_output_filepath,
+    sanitize_character_name,
+    extract_character_from_prompt,
+    extract_character_from_image_metadata,
 )
 from sdcli import apply_overrides
 
@@ -142,6 +145,115 @@ class TestUtils(unittest.TestCase):
                 tmpdir, "2026", "2026-10-11", "20261011143015_2.png"
             )
             self.assertEqual(batch_path, expected_batch_path)
+
+    def test_sanitize_character_name(self):
+        self.assertEqual(
+            sanitize_character_name("Lisa Simpson (The Simpsons)"),
+            "lisa_simpson_the_simpsons",
+        )
+        self.assertEqual(
+            sanitize_character_name("Mina Ashiro (Kaiju No. 8)"),
+            "mina_ashiro_kaiju_no_8",
+        )
+        self.assertEqual(
+            sanitize_character_name("Female dancer"),
+            "female_dancer",
+        )
+        self.assertEqual(
+            sanitize_character_name("Spider-Gwen / Gwen Stacy"),
+            "spider_gwen_gwen_stacy",
+        )
+        self.assertEqual(sanitize_character_name(""), "")
+        self.assertEqual(sanitize_character_name(None), "")
+
+    def test_extract_character_from_prompt(self):
+        ctx = {"character": "Lisa Simpson (The Simpsons)", "place": "cyberpunk city"}
+        # Case 1: Template contains {character}
+        prompt1 = "solo, ({character}:1.4), in {place}"
+        self.assertEqual(
+            extract_character_from_prompt(prompt1, ctx), "Lisa Simpson (The Simpsons)"
+        )
+
+        # Case 2: Template contains {characters}
+        prompt2 = "solo, ({characters}:1.4)"
+        self.assertEqual(
+            extract_character_from_prompt(prompt2, ctx), "Lisa Simpson (The Simpsons)"
+        )
+
+        # Case 3: Prompt does not reference character wildcard
+        prompt3 = "a futuristic skyscraper at dusk, highly detailed"
+        self.assertIsNone(extract_character_from_prompt(prompt3, ctx))
+
+        # Case 4: None prompt
+        self.assertIsNone(extract_character_from_prompt(None, ctx))
+
+    def test_get_output_filepath_with_character(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_time = time.strptime("2026-10-11 14:30:15", "%Y-%m-%d %H:%M:%S")
+
+            # 1. With character and batch_size = 1
+            path = get_output_filepath(
+                tmpdir,
+                timestamp=fake_time,
+                batch_idx=0,
+                batch_size=1,
+                character="Lisa Simpson (The Simpsons)",
+            )
+            expected_path = os.path.join(
+                tmpdir,
+                "2026",
+                "2026-10-11",
+                "20261011143015-lisa_simpson_the_simpsons.png",
+            )
+            self.assertEqual(path, expected_path)
+
+            # 2. With character and batch_size > 1
+            batch_path = get_output_filepath(
+                tmpdir,
+                timestamp=fake_time,
+                batch_idx=1,
+                batch_size=2,
+                character="Lisa Simpson (The Simpsons)",
+            )
+            expected_batch = os.path.join(
+                tmpdir,
+                "2026",
+                "2026-10-11",
+                "20261011143015-lisa_simpson_the_simpsons_1.png",
+            )
+            self.assertEqual(batch_path, expected_batch)
+
+            # 3. Without character (None)
+            no_char_path = get_output_filepath(
+                tmpdir,
+                timestamp=fake_time,
+                batch_idx=0,
+                batch_size=1,
+                character=None,
+            )
+            expected_no_char = os.path.join(
+                tmpdir,
+                "2026",
+                "2026-10-11",
+                "20261011143015.png",
+            )
+            self.assertEqual(no_char_path, expected_no_char)
+
+    def test_extract_character_from_image_metadata(self):
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".png") as f:
+            filepath = f.name
+
+        try:
+            img = Image.new("RGB", (32, 32), color=(0, 255, 0))
+            img.save(filepath)
+            params = "score_9, (mini-giantess:1.2) (Polaris (Marvel Comics):1.4) at a doctor's office | Negative: ugly | Steps: 50 | Seed: 123"
+            embed_metadata_to_png(filepath, {"Parameters": params})
+
+            char = extract_character_from_image_metadata(filepath)
+            self.assertEqual(char, "Polaris (Marvel Comics)")
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
 
 
 if __name__ == "__main__":

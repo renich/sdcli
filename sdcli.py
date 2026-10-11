@@ -17,10 +17,32 @@ from modules.sdcli.utils import (
     read_file_as_fstring,
     evaluate_fstring,
     get_output_filepath,
+    extract_character_from_prompt,
 )
 from modules.components import WildcardManager
 
 console = Console()
+
+
+def get_raw_prompt_text(prompt_input, prompts_dir):
+    """Retrieves raw un-evaluated prompt template text from file or CLI string."""
+    if not prompt_input:
+        return ""
+    if os.path.exists(prompt_input):
+        logging.info(f"Using prompt path: {prompt_input} (resolved from CWD)")
+        with open(prompt_input, "r", encoding="utf-8") as f:
+            lines = [line for line in f if not line.strip().startswith("#")]
+        return "\n".join(lines)
+
+    p_path = os.path.join(prompts_dir, prompt_input)
+    if os.path.exists(p_path):
+        logging.info(f"Using prompt path: {p_path} (resolved from prompts_dir)")
+        with open(p_path, "r", encoding="utf-8") as f:
+            lines = [line for line in f if not line.strip().startswith("#")]
+        return "\n".join(lines)
+
+    logging.info("Using direct text prompt")
+    return prompt_input
 
 
 def resolve_prompt(prompt_input, prompts_dir, ctx):
@@ -179,7 +201,9 @@ def main():
             # 1. Prepare Prompts
             ctx = wildcards.get_context(iteration=i)
 
-            final_prompt = resolve_prompt(args.prompt, prompts_dir, ctx)
+            raw_prompt = get_raw_prompt_text(args.prompt, prompts_dir)
+            character_name = extract_character_from_prompt(raw_prompt, ctx)
+            final_prompt = evaluate_fstring(raw_prompt, ctx, source=args.prompt)
             final_nprompt = resolve_prompt(args.negative_prompt, prompts_dir, ctx) or ""
 
             if not final_prompt:
@@ -225,6 +249,7 @@ def main():
                         save_base=config["image_path"],
                         batch_idx=idx,
                         batch_size=batch_size,
+                        character=character_name,
                     )
 
                 # Metadata in single save pass

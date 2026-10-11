@@ -48,19 +48,109 @@ def get_output_dir(save_base, timestamp=None):
     return out_dir
 
 
+def sanitize_character_name(name: str) -> str:
+    """Converts character name into lowercase snake_case for filenames."""
+    if not name:
+        return ""
+    name = str(name).strip().lower()
+    name = re.sub(r"[^a-z0-9]+", "_", name)
+    return name.strip("_")
+
+
+def extract_character_from_prompt(raw_prompt: str, context: dict) -> str | None:
+    """
+    If {character} or {characters} is referenced in raw_prompt, returns the evaluated character name.
+    Otherwise returns None.
+    """
+    if not raw_prompt or not context:
+        return None
+    if re.search(r"\{[^{}]*\bcharacters?\b[^{}]*\}", raw_prompt):
+        char = context.get("character") or context.get("characters")
+        if char:
+            return str(char)
+    return None
+
+
+def extract_character_from_image_metadata(
+    image_path: str,
+    wildcard_file: str = "/usr/local/share/models/comfyui/wildcards/character.txt",
+) -> str | None:
+    """
+    Reads PNG image metadata and identifies the character name from the prompt using wildcard definitions.
+    """
+    try:
+        with Image.open(image_path) as img:
+            params = img.info.get("Parameters", "")
+    except Exception as e:
+        logging.warning(f"Failed to read image {image_path}: {e}")
+        return None
+
+    if not params:
+        return None
+
+    # Load wildcard list if available
+    wildcard_chars = []
+    if os.path.isfile(wildcard_file):
+        try:
+            with open(wildcard_file, "r", encoding="utf-8") as f:
+                wildcard_chars = [
+                    line.strip()
+                    for line in f
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+            wildcard_chars.sort(key=len, reverse=True)
+        except Exception as e:
+            logging.warning(
+                f"Failed to load wildcard characters from {wildcard_file}: {e}"
+            )
+
+    prompt_part = (
+        params.split(" | Negative:")[0] if " | Negative:" in params else params
+    )
+
+    # 1. Match against known wildcard characters
+    for char in wildcard_chars:
+        pattern = r"\(" + re.escape(char) + r"(?::[0-9.]*)?\)"
+        if re.search(pattern, prompt_part):
+            return char
+        if (
+            f"({char})" in prompt_part
+            or f" {char}," in prompt_part
+            or f", {char} " in prompt_part
+        ):
+            return char
+
+    # 2. Heuristic fallback: check for `(mini-giantess:...) (Character Name:weight)`
+    match = re.search(
+        r"\((?:mini-giantess:[^)]+\)\s*\()([^:)]+)(?::[0-9.]*)?\)", prompt_part
+    )
+    if match:
+        return match.group(1).strip()
+
+    return None
+
+
 def get_output_filepath(
-    save_base, timestamp=None, batch_idx=0, batch_size=1, extension=".png"
+    save_base,
+    timestamp=None,
+    batch_idx=0,
+    batch_size=1,
+    extension=".png",
+    character=None,
 ):
     """
-    Constructs the target filepath within save_base/YYYY/YYYY-MM-DD/YYYYMMDDHHMMSS[_idx].png.
+    Constructs the target filepath within save_base/YYYY/YYYY-MM-DD/YYYYMMDDHHMMSS[-character][_idx].png.
     """
     if timestamp is None:
         timestamp = time.localtime()
     out_dir = get_output_dir(save_base, timestamp)
     time_str = time.strftime("%H%M%S", timestamp)
     full_date = time.strftime("%Y%m%d", timestamp)
+
+    char_slug = sanitize_character_name(character) if character else ""
+    char_part = f"-{char_slug}" if char_slug else ""
     suffix = f"_{batch_idx}" if batch_size > 1 else ""
-    filename = f"{full_date}{time_str}{suffix}{extension}"
+    filename = f"{full_date}{time_str}{char_part}{suffix}{extension}"
     return os.path.join(out_dir, filename)
 
 
